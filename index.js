@@ -1,0 +1,1976 @@
+require('dotenv').config();
+
+const {
+    Client,
+    GatewayIntentBits,
+    Partials,
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    PermissionFlagsBits,
+    ApplicationCommandOptionType
+} = require('discord.js');
+
+const express = require('express');
+
+const app = express();
+
+app.get('/', (req, res) => {
+    res.send('🤖 Bot Middleman & Soporte - Activo 24/7');
+});
+
+app.listen(process.env.PORT || 3000, () => {
+    console.log('🌐 Servidor Express iniciado.');
+});
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ],
+    partials: [
+        Partials.Message,
+        Partials.Channel,
+        Partials.User
+    ]
+});
+
+// ============================================================
+// IDS DE CANALES
+// ============================================================
+
+const CANAL_PANEL_MIDDLEMAN = '1498096496992845834';
+const CANAL_LOGS_ID = '1542284565714968586';
+const CANAL_RESENAS_ID = '1535036437865566348';
+
+// ============================================================
+// ROLES
+// ============================================================
+
+const ROLE_MIDDLEMAN_ID = '1499596482322501802';
+
+const ROLES_STAFF_IDS = [
+    '1499596482322501802',
+    '1517988091653259364',
+    '1499595987411406998',
+    '1499606642898112612',
+    '1499597074642243686',
+    '1498106196589154334'
+];
+
+const ROLES_SOPORTE_IDS = [
+    '1517988091653259364',
+    '1499595987411406998',
+    '1499606642898112612',
+    '1499597074642243686',
+    '1498106196589154334'
+];
+
+// ============================================================
+// BASES DE DATOS
+// ============================================================
+
+const ticketsBD = new Map();
+const resenasBD = new Map();
+
+let contadorMiddleman = 1;
+let contadorSoporte = 1;
+
+// ============================================================
+// ESTILOS
+// ============================================================
+
+const BTN_STYLE = {
+    PRIMARY: 1,
+    SECONDARY: 2,
+    SUCCESS: 3,
+    DANGER: 4
+};
+
+// ============================================================
+// FECHA
+// ============================================================
+
+function formatearFecha(fecha) {
+    const dia = String(fecha.getDate()).padStart(2, '0');
+    const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+    const anio = String(fecha.getFullYear());
+
+    const horas = String(fecha.getHours()).padStart(2, '0');
+    const minutos = String(fecha.getMinutes()).padStart(2, '0');
+
+    return dia + '/' + mes + '/' + anio + ' ' + horas + ':' + minutos;
+}
+
+// ============================================================
+// COMPROBAR STAFF
+// ============================================================
+
+function esStaff(member) {
+    if (!member) return false;
+
+    return (
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        ROLES_STAFF_IDS.some(function(rolId) {
+            return member.roles.cache.has(rolId);
+        })
+    );
+}
+
+// ============================================================
+// COMPROBAR STAFF SUPERIOR
+// ============================================================
+
+function esStaffSuperior(member) {
+    if (!member) return false;
+
+    return (
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        ROLES_SOPORTE_IDS.some(function(rolId) {
+            return member.roles.cache.has(rolId);
+        })
+    );
+}
+
+// ============================================================
+// READY
+// ============================================================
+
+client.once('ready', async function() {
+
+    console.log('✅ Bot conectado como: ' + client.user.tag);
+
+    try {
+
+        await client.application.commands.set([
+
+            {
+                name: 'panel_middleman',
+                description: 'Enviar el panel de Middleman (Solo Admin)'
+            },
+
+            {
+                name: 'panel_soporte',
+                description: 'Enviar el panel de Soporte General (Solo Admin)'
+            },
+
+            {
+                name: 'añadir',
+                description: 'Añadir un usuario al ticket',
+
+                default_member_permissions:
+                    PermissionFlagsBits.ManageChannels.toString(),
+
+                options: [
+                    {
+                        name: 'usuario',
+                        description: 'Usuario a añadir al ticket',
+                        type: ApplicationCommandOptionType.User,
+                        required: true
+                    }
+                ]
+            },
+
+            {
+                name: 'force_ticket',
+                description: 'Forzar el cierre del ticket sin necesidad de reseña'
+            },
+
+            {
+                name: 'reseñar',
+                description: 'Calificar al Middleman asignado al ticket',
+
+                options: [
+                    {
+                        name: 'usuario',
+                        description: 'Selecciona al Middleman asignado',
+                        type: ApplicationCommandOptionType.User,
+                        required: true
+                    },
+
+                    {
+                        name: 'estrellas',
+                        description: 'Calificación de 1 a 5',
+                        type: ApplicationCommandOptionType.Integer,
+                        required: true,
+                        min_value: 1,
+                        max_value: 5
+                    },
+
+                    {
+                        name: 'comentario',
+                        description: 'Comentario u opinión',
+                        type: ApplicationCommandOptionType.String,
+                        required: false
+                    }
+                ]
+            },
+
+            {
+                name: 'reseñas',
+                description: 'Ver todas las reseñas de un usuario',
+
+                options: [
+                    {
+                        name: 'usuario',
+                        description: 'Usuario a consultar',
+                        type: ApplicationCommandOptionType.User,
+                        required: true
+                    }
+                ]
+            },
+
+            {
+                name: 'repuntuaciones',
+                description: 'Muestra el Top 10 de mejores calificaciones'
+            },
+
+            {
+                name: 'spin',
+                description: 'Ruleta del perdón 50/50'
+            }
+
+        ]);
+
+        console.log('🤖 Comandos Slash registrados correctamente.');
+
+    } catch (err) {
+
+        console.error('❌ Error al registrar comandos:', err);
+
+    }
+});
+
+// ============================================================
+// INTERACTIONS
+// ============================================================
+
+client.on('interactionCreate', async function(interaction) {
+
+    // ========================================================
+    // COMANDOS SLASH
+    // ========================================================
+
+    if (interaction.isChatInputCommand()) {
+
+        const commandName = interaction.commandName;
+        const options = interaction.options;
+        const channel = interaction.channel;
+        const user = interaction.user;
+        const member = interaction.member;
+        const guild = interaction.guild;
+
+        // ====================================================
+        // PANEL MIDDLEMAN
+        // ====================================================
+
+        if (commandName === 'panel_middleman') {
+
+            if (
+                !member.permissions.has(
+                    PermissionFlagsBits.Administrator
+                )
+            ) {
+
+                return interaction.reply({
+                    content: '❌ Solo administradores.',
+                    ephemeral: true
+                });
+
+            }
+
+            const embedPanel = new EmbedBuilder()
+                .setTitle('🤝 Servicio Oficial de Middleman')
+                .setColor(0x2ECC71)
+                .setDescription(
+                    '¿Quieres hacer tus trades, ventas, pvps, confiables pero no sabes como?, pues nosotros tenemos un equipo de intermediarios que te ayudará en todo lo necesario para que tus trades, ventas y pvps sean 100% legales. Están 100% recomendados por la comunidad. Los intermediarios, más conocidos como middleman, estarán siempre disponibles cuando necesites ayuda.\n\n' +
+                    'Haz clic en el botón para solicitar un **Middleman** oficial para tu transacción.'
+                )
+                .setFooter({
+                    text: 'Sistema de Tickets'
+                })
+                .setTimestamp();
+
+            const filaBoton =
+                new ActionRowBuilder().addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId('ticket_middleman')
+                        .setLabel('middleman')
+                        .setEmoji('🎟️')
+                        .setStyle(BTN_STYLE.SUCCESS)
+
+                );
+
+            await interaction.channel.send({
+                embeds: [embedPanel],
+                components: [filaBoton]
+            });
+
+            return interaction.reply({
+                content: '✅ Panel enviado correctamente.',
+                ephemeral: true
+            });
+        }
+
+        // ====================================================
+        // PANEL SOPORTE
+        // ====================================================
+
+        if (commandName === 'panel_soporte') {
+
+            if (
+                !member.permissions.has(
+                    PermissionFlagsBits.Administrator
+                )
+            ) {
+
+                return interaction.reply({
+                    content: '❌ Solo administradores.',
+                    ephemeral: true
+                });
+
+            }
+
+            const embedSoporte = new EmbedBuilder()
+                .setTitle('🛠️ Centro de Soporte y Atención')
+                .setColor(0x3498DB)
+                .setDescription(
+                    '¡Hola! ¿Te gustaría solucionar algún problema, resolver alguna pregunta o reportar algo? Te invito a abrir un ticket de soporte para que nuestro equipo de staff te ayude.\n\n' +
+                    'Recuerda que el staff siempre intentará estar a disposición para ayudar a todos los miembros que lo necesiten. También pedimos no abrir un ticket sin razón o para molestar. Los miembros del staff darán lo mejor para mantener un excelente ambiente entre todos.\n\n' +
+                    'Esperamos que le hayas prestado atención a esto. Si deseas abrir un ticket, ¡te invitamos a seleccionarlo abajo!'
+                )
+                .setFooter({
+                    text: 'Sistema de Soporte'
+                })
+                .setTimestamp();
+
+            const filaBotonesSoporte =
+                new ActionRowBuilder().addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId('ticket_soporte')
+                        .setLabel('soporte')
+                        .setEmoji('🎟️')
+                        .setStyle(BTN_STYLE.DANGER),
+
+                    new ButtonBuilder()
+                        .setCustomId('ticket_pregunta')
+                        .setLabel('pregunta')
+                        .setEmoji('👀')
+                        .setStyle(BTN_STYLE.PRIMARY),
+
+                    new ButtonBuilder()
+                        .setCustomId('ticket_ayuda')
+                        .setLabel('ayuda')
+                        .setEmoji('⚠️')
+                        .setStyle(BTN_STYLE.SUCCESS),
+
+                    new ButtonBuilder()
+                        .setCustomId('ticket_reportar')
+                        .setLabel('reportar')
+                        .setEmoji('❌')
+                        .setStyle(BTN_STYLE.DANGER)
+
+                );
+
+            await interaction.channel.send({
+                embeds: [embedSoporte],
+                components: [filaBotonesSoporte]
+            });
+
+            return interaction.reply({
+                content: '✅ Panel de soporte enviado correctamente.',
+                ephemeral: true
+            });
+        }
+
+        // ====================================================
+        // AÑADIR
+        // ====================================================
+
+        if (commandName === 'añadir') {
+
+            const esTicket =
+                channel.name.startsWith('ticket-') ||
+                ticketsBD.has(channel.id);
+
+            if (!esTicket) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Este comando solo funciona dentro de un ticket activo.',
+                    ephemeral: true
+                });
+
+            }
+
+            if (!esStaff(member)) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Solo un **Middleman o superior** puede añadir usuarios al ticket.',
+                    ephemeral: true
+                });
+
+            }
+
+            const usuarioAAñadir =
+                options.getUser('usuario');
+
+            try {
+
+                await channel.permissionOverwrites.edit(
+                    usuarioAAñadir.id,
+                    {
+                        ViewChannel: true,
+                        SendMessages: true,
+                        AttachFiles: true
+                    }
+                );
+
+                return interaction.reply({
+                    content:
+                        '✅ <@' +
+                        usuarioAAñadir.id +
+                        '> ha sido añadido al ticket.'
+                });
+
+            } catch (err) {
+
+                console.error(err);
+
+                return interaction.reply({
+                    content:
+                        '❌ Error al intentar dar permisos al usuario.',
+                    ephemeral: true
+                });
+
+            }
+        }
+
+        // ====================================================
+        // FORCE TICKET
+        // ====================================================
+
+        if (commandName === 'force_ticket') {
+
+            const datos =
+                ticketsBD.get(channel.id);
+
+            const esCanalTicket =
+                channel.name.startsWith('ticket-') ||
+                !!datos;
+
+            if (!esCanalTicket) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Este comando solo se puede usar dentro de un canal de ticket.',
+                    ephemeral: true
+                });
+
+            }
+
+            if (!esStaff(member)) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Solo el Staff o Administradores pueden forzar el cierre de un ticket.',
+                    ephemeral: true
+                });
+
+            }
+
+            await interaction.reply({
+                content:
+                    '⚠️ **Cierre forzado iniciado.** Guardando log y borrando canal en 5 segundos...'
+            });
+
+            const creadorMencion =
+                datos && datos.creador
+                    ? '<@' + datos.creador.id + '>'
+                    : 'Desconocido';
+
+            const atendidoMencion =
+                datos && datos.reclamadoPor
+                    ? '<@' + datos.reclamadoPor.id + '>'
+                    : 'Sin reclamar';
+
+            const fechaApertura =
+                datos && datos.fechaApertura
+                    ? formatearFecha(datos.fechaApertura)
+                    : 'Desconocida';
+
+            const embedLog =
+                new EmbedBuilder()
+                    .setTitle(
+                        '📋 Log - ' +
+                        channel.name +
+                        ' (Cierre Forzado)'
+                    )
+                    .setColor(0xE74C3C)
+                    .addFields(
+
+                        {
+                            name: '👤 Creador',
+                            value: creadorMencion,
+                            inline: true
+                        },
+
+                        {
+                            name: '📌 Atendido por',
+                            value: atendidoMencion,
+                            inline: true
+                        },
+
+                        {
+                            name: '🔒 Cerrado por',
+                            value:
+                                '<@' +
+                                user.id +
+                                '> (Forzado)',
+                            inline: true
+                        },
+
+                        {
+                            name: '🕒 Creado',
+                            value: fechaApertura,
+                            inline: false
+                        },
+
+                        {
+                            name: '⏰ Cerrado',
+                            value:
+                                formatearFecha(new Date()),
+                            inline: false
+                        }
+
+                    )
+                    .setFooter({
+                        text:
+                            'Ticket cerrado mediante /force_ticket'
+                    })
+                    .setTimestamp();
+
+            const canalLogs =
+                guild.channels.cache.get(CANAL_LOGS_ID);
+
+            if (canalLogs) {
+
+                await canalLogs.send({
+                    embeds: [embedLog]
+                });
+
+            }
+
+            setTimeout(
+                async function() {
+
+                    ticketsBD.delete(channel.id);
+
+                    await channel
+                        .delete()
+                        .catch(function() {});
+
+                },
+                5000
+            );
+
+            return;
+        }
+
+        // ====================================================
+        // SPIN
+        // ====================================================
+
+        if (commandName === 'spin') {
+
+            const esPerdonado =
+                Math.random() < 0.5;
+
+            const resultado =
+                esPerdonado
+                    ? 'PERDONADO 🟢'
+                    : 'NO PERDONADO 🔴';
+
+            const embedRuleta =
+                new EmbedBuilder()
+                    .setTitle('🎰 Ruleta del Perdón')
+                    .setColor(
+                        esPerdonado
+                            ? 0x2ECC71
+                            : 0xE74C3C
+                    )
+                    .setDescription(
+                        '**Juzgando a:** ' +
+                        '<@' +
+                        user.id +
+                        '>\n\n' +
+                        '**Resultado:** ' +
+                        resultado
+                    );
+
+            return interaction.reply({
+                embeds: [embedRuleta]
+            });
+        }
+
+        // ====================================================
+        // RESEÑAR
+        // ====================================================
+
+        if (commandName === 'reseñar') {
+
+            const datos =
+                ticketsBD.get(channel.id);
+
+            const esCanalTicket =
+                channel.name.startsWith(
+                    'ticket-middleman-'
+                ) ||
+                !!datos;
+
+            if (!esCanalTicket) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Este comando solo se puede utilizar dentro de un ticket activo de Middleman.',
+                    ephemeral: true
+                });
+
+            }
+
+            if (datos && datos.tipo !== 'middleman') {
+
+                return interaction.reply({
+                    content:
+                        '❌ Las reseñas solo pueden hacerse en tickets de Middleman.',
+                    ephemeral: true
+                });
+
+            }
+
+            const objetivo =
+                options.getUser('usuario');
+
+            const origen =
+                '🎟️ Ticket';
+
+            if (
+                datos &&
+                datos.reclamadoPor &&
+                objetivo.id !== datos.reclamadoPor.id
+            ) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Solo puedes reseñar al Middleman asignado: <@' +
+                        datos.reclamadoPor.id +
+                        '>.',
+                    ephemeral: true
+                });
+
+            }
+
+            if (
+                datos &&
+                user.id !== datos.creador.id
+            ) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Solo el creador del ticket puede hacer la reseña.',
+                    ephemeral: true
+                });
+
+            }
+
+            if (
+                datos &&
+                datos.resenaHecha
+            ) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Ya has registrado tu reseña para este ticket.',
+                    ephemeral: true
+                });
+
+            }
+
+            const estrellas =
+                options.getInteger('estrellas');
+
+            const comentario =
+                options.getString('comentario') ||
+                'Sin comentario.';
+
+            if (!resenasBD.has(objetivo.id)) {
+
+                resenasBD.set(
+                    objetivo.id,
+                    []
+                );
+
+            }
+
+            resenasBD
+                .get(objetivo.id)
+                .push({
+
+                    autorId: user.id,
+                    estrellas: estrellas,
+                    comentario: comentario,
+                    tipoOrigen: origen
+
+                });
+
+            if (datos) {
+
+                datos.resenaHecha = true;
+
+            }
+
+            const estrellasStr =
+                '⭐'.repeat(estrellas);
+
+            const embedResena =
+                new EmbedBuilder()
+                    .setTitle(
+                        '⭐ Reseña Guardada (' +
+                        origen +
+                        ')'
+                    )
+                    .setColor(0xF1C40F)
+                    .setDescription(
+                        '**Cliente:** <@' +
+                        user.id +
+                        '>\n' +
+                        '**Middleman Reseñado:** <@' +
+                        objetivo.id +
+                        '>\n' +
+                        '**Calificación:** ' +
+                        estrellasStr +
+                        ' (' +
+                        estrellas +
+                        '/5)\n' +
+                        '**Comentario:** ' +
+                        comentario
+                    )
+                    .setTimestamp();
+
+            return interaction.reply({
+                embeds: [embedResena]
+            });
+        }
+
+        // ====================================================
+        // RESEÑAS
+        // ====================================================
+
+        if (commandName === 'reseñas') {
+
+            if (
+                channel.id !== CANAL_RESENAS_ID
+            ) {
+
+                return interaction.reply({
+                    content:
+                        '❌ Usa este comando únicamente en <#' +
+                        CANAL_RESENAS_ID +
+                        '>.',
+                    ephemeral: true
+                });
+
+            }
+
+            const usuario =
+                options.getUser('usuario');
+
+            const lista =
+                resenasBD.get(usuario.id) || [];
+
+            if (lista.length === 0) {
+
+                return interaction.reply({
+                    content:
+                        'ℹ️ El usuario <@' +
+                        usuario.id +
+                        '> aún no tiene reseñas.'
+                });
+
+            }
+
+            const promedio =
+                (
+                    lista.reduce(
+                        function(acc, r) {
+                            return acc + r.estrellas;
+                        },
+                        0
+                    ) /
+                    lista.length
+                ).toFixed(1);
+
+            let texto = '';
+
+            lista
+                .slice(-10)
+                .forEach(function(r, i) {
+
+                    const tagOrigen =
+                        r.tipoOrigen ||
+                        '⭐ General';
+
+                    texto +=
+                        '**' +
+                        (i + 1) +
+                        '.** [' +
+                        tagOrigen +
+                        '] Por <@' +
+                        r.autorId +
+                        '> - ' +
+                        '⭐'.repeat(r.estrellas) +
+                        '\n> *' +
+                        r.comentario +
+                        '*\n\n';
+
+                });
+
+            const embedHistorial =
+                new EmbedBuilder()
+                    .setTitle(
+                        '⭐ Historial Global de Reseñas - ' +
+                        usuario.username
+                    )
+                    .setColor(0xF1C40F)
+                    .setThumbnail(
+                        usuario.displayAvatarURL({
+                            dynamic: true
+                        })
+                    )
+                    .setDescription(
+                        '**Promedio Global:** ' +
+                        promedio +
+                        ' / 5.0 ⭐\n' +
+                        '**Total de Reseñas:** ' +
+                        lista.length +
+                        '\n\n' +
+                        texto
+                    )
+                    .setFooter({
+                        text:
+                            'Reseñas consolidadas de Tickets y Subastas'
+                    })
+                    .setTimestamp();
+
+            return interaction.reply({
+                embeds: [embedHistorial]
+            });
+        }
+
+        // ====================================================
+        // REPUNTUACIONES
+        // ====================================================
+
+        if (
+            commandName === 'repuntuaciones'
+        ) {
+
+            if (
+                resenasBD.size === 0
+            ) {
+
+                return interaction.reply({
+                    content:
+                        'ℹ️ Aún no hay reseñas registradas en la base de datos.'
+                });
+
+            }
+
+            const listaUsuarios = [];
+
+            resenasBD.forEach(
+                function(lista, usuarioId) {
+
+                    const total =
+                        lista.length;
+
+                    const promedio =
+                        lista.reduce(
+                            function(acc, r) {
+                                return acc + r.estrellas;
+                            },
+                            0
+                        ) / total;
+
+                    listaUsuarios.push({
+                        usuarioId: usuarioId,
+                        promedio: promedio,
+                        total: total
+                    });
+
+                }
+            );
+
+            listaUsuarios.sort(
+                function(a, b) {
+
+                    if (
+                        b.promedio !==
+                        a.promedio
+                    ) {
+
+                        return (
+                            b.promedio -
+                            a.promedio
+                        );
+
+                    }
+
+                    return (
+                        b.total -
+                        a.total
+                    );
+
+                }
+            );
+
+            const medallas =
+                ['🥇', '🥈', '🥉'];
+
+            let descripcionTop = '';
+
+            const top10 =
+                listaUsuarios.slice(0, 10);
+
+            top10.forEach(
+                function(item, index) {
+
+                    const emojiMedalla =
+                        medallas[index] ||
+                        '🎖️';
+
+                    const promFormat =
+                        item.promedio.toFixed(1);
+
+                    descripcionTop +=
+                        emojiMedalla +
+                        ' **#' +
+                        (index + 1) +
+                        '** <@' +
+                        item.usuarioId +
+                        '>\n' +
+                        '> **Calificación:** ' +
+                        promFormat +
+                        ' / 5.0 ⭐ | **Reseñas:** ' +
+                        item.total +
+                        '\n\n';
+
+                }
+            );
+
+            const embedTop =
+                new EmbedBuilder()
+                    .setTitle(
+                        '🏆 Top 10 Mejores Reseñados y Puntuaciones'
+                    )
+                    .setColor(0xF1C40F)
+                    .setDescription(
+                        descripcionTop
+                    )
+                    .setFooter({
+                        text:
+                            'Tabla de Clasificación de Middlemans y Staff'
+                    })
+                    .setTimestamp();
+
+            return interaction.reply({
+                embeds: [embedTop]
+            });
+        }
+    }
+
+    // ========================================================
+    // BOTONES
+    // ========================================================
+
+    if (interaction.isButton()) {
+
+        const customId = interaction.customId;
+        const guild = interaction.guild;
+        const user = interaction.user;
+        const channel = interaction.channel;
+        const member = interaction.member;
+
+        // ====================================================
+        // CREAR TICKET MIDDLEMAN
+        // ====================================================
+
+        if (
+            customId ===
+            'ticket_middleman'
+        ) {
+
+            await interaction.deferReply({
+                ephemeral: true
+            });
+
+            const nombreCanal =
+                'ticket-middleman-' +
+                contadorMiddleman++;
+
+            const permissionOverwrites = [
+
+                {
+                    id: guild.roles.everyone.id,
+                    deny: [
+                        PermissionFlagsBits.ViewChannel
+                    ]
+                },
+
+                {
+                    id: user.id,
+                    allow: [
+                        PermissionFlagsBits.ViewChannel,
+                        PermissionFlagsBits.SendMessages,
+                        PermissionFlagsBits.AttachFiles
+                    ]
+                }
+
+            ];
+
+            ROLES_STAFF_IDS.forEach(
+                function(rolId) {
+
+                    permissionOverwrites.push({
+
+                        id: rolId,
+
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.AttachFiles
+                        ]
+
+                    });
+
+                }
+            );
+
+            try {
+
+                const ticketChannel =
+                    await guild.channels.create({
+
+                        name: nombreCanal,
+                        type: 0,
+                        permissionOverwrites: permissionOverwrites
+
+                    });
+
+                ticketsBD.set(
+                    ticketChannel.id,
+                    {
+
+                        tipo: 'middleman',
+                        creador: user,
+                        reclamadoPor: null,
+                        fechaApertura: new Date(),
+                        resenaHecha: false
+
+                    }
+                );
+
+                const filaBotonesTicket =
+                    new ActionRowBuilder()
+                        .addComponents(
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_reclamar'
+                                )
+                                .setLabel(
+                                    'Reclamar Ticket'
+                                )
+                                .setEmoji('📜')
+                                .setStyle(
+                                    BTN_STYLE.SECONDARY
+                                ),
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_cerrar'
+                                )
+                                .setLabel(
+                                    'Cerrar Ticket'
+                                )
+                                .setEmoji('🔒')
+                                .setStyle(
+                                    BTN_STYLE.DANGER
+                                )
+
+                        );
+
+                const embedBienvenida =
+                    new EmbedBuilder()
+                        .setTitle(
+                            '🎟️ Ticket de MIDDLEMAN'
+                        )
+                        .setColor(0x2ECC71)
+                        .setDescription(
+                            '<@' +
+                            user.id +
+                            '> abrió un ticket para **middleman**. Un miembro del staff te atenderá en breve.'
+                        )
+                        .setFooter({
+                            text:
+                                'Sistema de Tickets'
+                        })
+                        .setTimestamp();
+
+                const mencionesRoles =
+                    ROLES_STAFF_IDS
+                        .map(
+                            function(id) {
+                                return '<@&' + id + '>';
+                            }
+                        )
+                        .join(' ');
+
+                await ticketChannel.send({
+
+                    content:
+                        '<@' +
+                        user.id +
+                        '> ' +
+                        mencionesRoles,
+
+                    embeds: [
+                        embedBienvenida
+                    ],
+
+                    components: [
+                        filaBotonesTicket
+                    ]
+
+                });
+
+                return interaction.editReply({
+
+                    content:
+                        '✅ Ticket creado en: <#' +
+                        ticketChannel.id +
+                        '>'
+
+                });
+
+            } catch (err) {
+
+                console.error(err);
+
+                return interaction.editReply({
+
+                    content:
+                        '❌ Error al crear canal.'
+
+                });
+
+            }
+        }
+
+        // ====================================================
+        // CREAR TICKET SOPORTE
+        // ====================================================
+
+        if (
+            [
+                'ticket_soporte',
+                'ticket_pregunta',
+                'ticket_ayuda',
+                'ticket_reportar'
+            ].includes(customId)
+        ) {
+
+            await interaction.deferReply({
+                ephemeral: true
+            });
+
+            const detallesCategorias = {
+
+                ticket_soporte: {
+                    nombre: 'soporte',
+                    emoji: '🎫',
+                    titulo: 'Ticket de SOPORTE',
+                    color: 0xE74C3C
+                },
+
+                ticket_pregunta: {
+                    nombre: 'pregunta',
+                    emoji: '❓',
+                    titulo: 'Ticket de PREGUNTA',
+                    color: 0x3498DB
+                },
+
+                ticket_ayuda: {
+                    nombre: 'ayuda',
+                    emoji: '⚠️',
+                    titulo: 'Ticket de AYUDA',
+                    color: 0x2ECC71
+                },
+
+                ticket_reportar: {
+                    nombre: 'reportar',
+                    emoji: '🚨',
+                    titulo: 'Ticket de REPORTE',
+                    color: 0x95A5A6
+                }
+
+            };
+
+            const info =
+                detallesCategorias[customId];
+
+            const nombreCanal =
+                'ticket-' +
+                info.nombre +
+                '-' +
+                contadorSoporte++;
+
+            const permissionOverwrites = [
+
+                {
+                    id: guild.roles.everyone.id,
+                    deny: [
+                        PermissionFlagsBits.ViewChannel
+                    ]
+                },
+
+                {
+                    id: user.id,
+                    allow: [
+                        PermissionFlagsBits.ViewChannel,
+                        PermissionFlagsBits.SendMessages,
+                        PermissionFlagsBits.AttachFiles
+                    ]
+                },
+
+                {
+                    id: ROLE_MIDDLEMAN_ID,
+                    deny: [
+                        PermissionFlagsBits.ViewChannel
+                    ]
+                }
+
+            ];
+
+            ROLES_SOPORTE_IDS.forEach(
+                function(rolId) {
+
+                    permissionOverwrites.push({
+
+                        id: rolId,
+
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.AttachFiles
+                        ]
+
+                    });
+
+                }
+            );
+
+            try {
+
+                const ticketChannel =
+                    await guild.channels.create({
+
+                        name: nombreCanal,
+                        type: 0,
+                        permissionOverwrites: permissionOverwrites
+
+                    });
+
+                ticketsBD.set(
+                    ticketChannel.id,
+                    {
+
+                        tipo: info.nombre,
+                        creador: user,
+                        reclamadoPor: null,
+                        fechaApertura: new Date(),
+                        resenaHecha: true
+
+                    }
+                );
+
+                const filaBotonesTicket =
+                    new ActionRowBuilder()
+                        .addComponents(
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_reclamar'
+                                )
+                                .setLabel(
+                                    'Reclamar Ticket'
+                                )
+                                .setEmoji('📜')
+                                .setStyle(
+                                    BTN_STYLE.SECONDARY
+                                ),
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_cerrar'
+                                )
+                                .setLabel(
+                                    'Cerrar Ticket'
+                                )
+                                .setEmoji('🔒')
+                                .setStyle(
+                                    BTN_STYLE.DANGER
+                                )
+
+                        );
+
+                const embedBienvenida =
+                    new EmbedBuilder()
+                        .setTitle(
+                            info.emoji +
+                            ' ' +
+                            info.titulo
+                        )
+                        .setColor(info.color)
+                        .setDescription(
+                            '<@' +
+                            user.id +
+                            '> abrió un ticket para **' +
+                            info.nombre +
+                            '**. Un miembro del staff te atenderá en breve.'
+                        )
+                        .setFooter({
+                            text:
+                                'Sistema de Soporte'
+                        })
+                        .setTimestamp();
+
+                const mencionesRoles =
+                    ROLES_SOPORTE_IDS
+                        .map(
+                            function(id) {
+                                return '<@&' + id + '>';
+                            }
+                        )
+                        .join(' ');
+
+                await ticketChannel.send({
+
+                    content:
+                        '<@' +
+                        user.id +
+                        '> ' +
+                        mencionesRoles,
+
+                    embeds: [
+                        embedBienvenida
+                    ],
+
+                    components: [
+                        filaBotonesTicket
+                    ]
+
+                });
+
+                return interaction.editReply({
+
+                    content:
+                        '✅ Ticket de ' +
+                        info.nombre +
+                        ' creado en: <#' +
+                        ticketChannel.id +
+                        '>'
+
+                });
+
+            } catch (err) {
+
+                console.error(err);
+
+                return interaction.editReply({
+
+                    content:
+                        '❌ Error al crear el canal de ticket.'
+
+                });
+
+            }
+        }
+
+        // ====================================================
+        // RECLAMAR TICKET
+        // ====================================================
+
+        if (
+            customId ===
+            'btn_reclamar'
+        ) {
+
+            const datos =
+                ticketsBD.get(channel.id);
+
+            if (!datos) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Datos de ticket no encontrados.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            const esAdministrador =
+                member.permissions.has(
+                    PermissionFlagsBits.Administrator
+                );
+
+            const tieneRolStaff =
+                ROLES_STAFF_IDS.some(
+                    function(rolId) {
+                        return member.roles.cache.has(rolId);
+                    }
+                );
+
+            if (
+                !tieneRolStaff &&
+                !esAdministrador
+            ) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ No tienes permiso para reclamar este ticket.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            const esTicketSoporte = [
+
+                'soporte',
+                'pregunta',
+                'ayuda',
+                'reportar'
+
+            ].includes(datos.tipo);
+
+            const esMiddleman =
+                member.roles.cache.has(
+                    ROLE_MIDDLEMAN_ID
+                );
+
+            const tieneRolSuperior =
+                ROLES_SOPORTE_IDS.some(
+                    function(rolId) {
+                        return member.roles.cache.has(rolId);
+                    }
+                );
+
+            if (
+                esTicketSoporte &&
+                esMiddleman &&
+                !tieneRolSuperior &&
+                !esAdministrador
+            ) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Los Middleman sin un rol superior solo pueden reclamar tickets de **Middleman**.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (datos.reclamadoPor) {
+
+                return interaction.reply({
+
+                    content:
+                        '⚠️ Este ticket ya fue reclamado por <@' +
+                        datos.reclamadoPor.id +
+                        '>.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            datos.reclamadoPor =
+                user;
+
+            try {
+
+                // =================================================
+                // TICKET SOPORTE
+                // =================================================
+
+                if (esTicketSoporte) {
+
+                    await channel.permissionOverwrites.edit(
+                        ROLE_MIDDLEMAN_ID,
+                        {
+                            ViewChannel: false
+                        }
+                    ).catch(function() {});
+
+                    for (
+                        const rolId
+                        of ROLES_SOPORTE_IDS
+                    ) {
+
+                        await channel.permissionOverwrites.edit(
+                            rolId,
+                            {
+                                ViewChannel: true,
+                                SendMessages: true,
+                                AttachFiles: true
+                            }
+                        ).catch(function() {});
+
+                    }
+
+                    await channel.permissionOverwrites.edit(
+                        datos.creador.id,
+                        {
+                            ViewChannel: true,
+                            SendMessages: true,
+                            AttachFiles: true
+                        }
+                    ).catch(function() {});
+
+                }
+
+                // =================================================
+                // TICKET MIDDLEMAN
+                // =================================================
+
+                else {
+
+                    for (
+                        const rolId
+                        of ROLES_STAFF_IDS
+                    ) {
+
+                        if (
+                            rolId ===
+                            '1517988091653259364'
+                        ) {
+
+                            await channel.permissionOverwrites.edit(
+                                rolId,
+                                {
+                                    ViewChannel: true,
+                                    SendMessages: true,
+                                    AttachFiles: true
+                                }
+                            ).catch(function() {});
+
+                        } else {
+
+                            await channel.permissionOverwrites.edit(
+                                rolId,
+                                {
+                                    ViewChannel: false
+                                }
+                            ).catch(function() {});
+
+                        }
+                    }
+
+                    await channel.permissionOverwrites.edit(
+                        user.id,
+                        {
+                            ViewChannel: true,
+                            SendMessages: true,
+                            AttachFiles: true
+                        }
+                    ).catch(function() {});
+
+                    await channel.permissionOverwrites.edit(
+                        datos.creador.id,
+                        {
+                            ViewChannel: true,
+                            SendMessages: true,
+                            AttachFiles: true
+                        }
+                    ).catch(function() {});
+
+                }
+
+                // =================================================
+                // ACTUALIZAR BOTÓN
+                // =================================================
+
+                const filaActualizada =
+                    new ActionRowBuilder()
+                        .addComponents(
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_reclamar'
+                                )
+                                .setLabel(
+                                    'Ticket Reclamado'
+                                )
+                                .setEmoji('📜')
+                                .setStyle(
+                                    BTN_STYLE.SECONDARY
+                                )
+                                .setDisabled(true),
+
+                            new ButtonBuilder()
+                                .setCustomId(
+                                    'btn_cerrar'
+                                )
+                                .setLabel(
+                                    'Cerrar Ticket'
+                                )
+                                .setEmoji('🔒')
+                                .setStyle(
+                                    BTN_STYLE.DANGER
+                                )
+
+                        );
+
+                await interaction.update({
+
+                    components: [
+                        filaActualizada
+                    ]
+
+                });
+
+                if (esTicketSoporte) {
+
+                    return channel.send({
+
+                        content:
+                            '📌 **Ticket reclamado por <@' +
+                            user.id +
+                            '>.**\n' +
+                            '👥 El ticket continúa visible para todo el Staff autorizado.'
+
+                    });
+
+                }
+
+                return channel.send({
+
+                    content:
+                        '📌 **Reclamado por <@' +
+                        user.id +
+                        '>.**\n' +
+                        '🔒 Solo el creador, el miembro que reclamó y el rol Staff autorizado tienen acceso.'
+
+                });
+
+            } catch (error) {
+
+                console.error(
+                    '❌ Error al reclamar ticket:',
+                    error
+                );
+
+            }
+        }
+
+        // ====================================================
+        // CERRAR TICKET
+        // ====================================================
+
+        if (
+            customId ===
+            'btn_cerrar'
+        ) {
+
+            const datos =
+                ticketsBD.get(channel.id);
+
+            if (!datos) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Datos no encontrados.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (!esStaff(member)) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Solo un **Middleman o superior** puede cerrar tickets.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (!datos.reclamadoPor) {
+
+                return interaction.reply({
+
+                    content:
+                        '⚠️ Un encargado debe reclamar el ticket antes de cerrarlo.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (
+                datos.tipo === 'middleman' &&
+                !datos.resenaHecha
+            ) {
+
+                return interaction.reply({
+
+                    content:
+                        '⚠️ **ESPERA** Antes de cerrar el ticket, <@' +
+                        datos.creador.id +
+                        '> debe reseñar a: <@' +
+                        datos.reclamadoPor.id +
+                        '>',
+
+                    ephemeral: false
+
+                });
+
+            }
+
+            const btnConfirmar =
+                new ActionRowBuilder()
+                    .addComponents(
+
+                        new ButtonBuilder()
+                            .setCustomId(
+                                'btn_confirmar_cierre'
+                            )
+                            .setLabel(
+                                '⚠️ Confirmar Cierre'
+                            )
+                            .setStyle(
+                                BTN_STYLE.DANGER
+                            )
+
+                    );
+
+            return interaction.reply({
+
+                content:
+                    '¿Estás seguro de cerrar este ticket?',
+
+                components: [
+                    btnConfirmar
+                ]
+
+            });
+        }
+
+        // ====================================================
+        // CONFIRMAR CIERRE
+        // ====================================================
+
+        if (
+            customId ===
+            'btn_confirmar_cierre'
+        ) {
+
+            const datos =
+                ticketsBD.get(channel.id);
+
+            if (!datos) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Datos del ticket no encontrados.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (!esStaff(member)) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ Solo un **Middleman o superior** puede cerrar tickets.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (!datos.reclamadoPor) {
+
+                return interaction.reply({
+
+                    content:
+                        '❌ El ticket no tiene un encargado.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            if (
+                datos.tipo === 'middleman' &&
+                !datos.resenaHecha
+            ) {
+
+                return interaction.reply({
+
+                    content:
+                        '⚠️ <@' +
+                        datos.creador.id +
+                        '> todavía debe realizar la reseña.',
+
+                    ephemeral: true
+
+                });
+
+            }
+
+            await interaction.update({
+
+                content:
+                    '🔒 Guardando log y cerrando en 5s...',
+
+                components: []
+
+            });
+
+            const embedLog =
+                new EmbedBuilder()
+                    .setTitle(
+                        '📋 Log - ' +
+                        channel.name
+                    )
+                    .setColor(0x2ECC71)
+                    .addFields(
+
+                        {
+                            name: '👤 Creador',
+                            value:
+                                '<@' +
+                                datos.creador.id +
+                                '>',
+                            inline: true
+                        },
+
+                        {
+                            name: '📌 Atendido por',
+                            value:
+                                '<@' +
+                                datos.reclamadoPor.id +
+                                '>',
+                            inline: true
+                        },
+
+                        {
+                            name: '🔒 Cerrado por',
+                            value:
+                                '<@' +
+                                user.id +
+                                '>',
+                            inline: true
+                        },
+
+                        {
+                            name: '🕒 Creado',
+                            value:
+                                formatearFecha(
+                                    datos.fechaApertura
+                                ),
+                            inline: false
+                        },
+
+                        {
+                            name: '⏰ Cerrado',
+                            value:
+                                formatearFecha(
+                                    new Date()
+                                ),
+                            inline: false
+                        }
+
+                    )
+                    .setTimestamp();
+
+            const canalLogs =
+                guild.channels.cache.get(
+                    CANAL_LOGS_ID
+                );
+
+            if (canalLogs) {
+
+                await canalLogs.send({
+
+                    embeds: [
+                        embedLog
+                    ]
+
+                });
+
+            }
+
+            setTimeout(
+                async function() {
+
+                    ticketsBD.delete(
+                        channel.id
+                    );
+
+                    await channel
+                        .delete()
+                        .catch(function() {});
+
+                },
+                5000
+            );
+        }
+    }
+});
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+client.login(
+    process.env.TOKEN
+);
