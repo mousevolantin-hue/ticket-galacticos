@@ -27,6 +27,7 @@ const GIF_NUEVO = 'https://www.image2url.com/r2/default/gifs/1791161891343-37434
 const GIF_REGLAS = GIF_NUEVO;
 const GIF_COMANDOS = GIF_NUEVO;
 const CERBERUS_PATH = path.join(__dirname, 'cerberus.png');
+const CANAL_REGISTROS_MIDDLEMAN = '1555339131964489899';
 
 
 const app = express();
@@ -831,12 +832,10 @@ function crearEmbedBrainrot(
             'attachment://cerberus.png'
         );
 
-    } else if (
-        brainrot.imagen
-    ) {
-
-        embed.setThumbnail(
-            brainrot.imagen
+    } else {
+        // Las imágenes principales se muestran grandes; si falta una URL, se usa el GIF general como respaldo.
+        embed.setImage(
+            brainrot.imagen || GIF_NUEVO
         );
     }
 
@@ -1082,6 +1081,19 @@ client.once('ready', async function() {
             {
                 name: 'reglas',
                 description: 'Muestra las reglas del servidor.'
+            },
+            {
+                name: 'registro',
+                description: 'Registrar una experiencia con un Middleman',
+                options: [
+                    { name: 'middleman', description: 'Middleman involucrado', type: ApplicationCommandOptionType.User, required: true },
+                    { name: 'resultado', description: 'Resultado del caso', type: ApplicationCommandOptionType.String, required: true, choices: [
+                        { name: 'Positivo', value: 'Positivo' },
+                        { name: 'Negativo', value: 'Negativo' }
+                    ]},
+                    { name: 'relato', description: 'Cuenta qué pasó en el ticket', type: ApplicationCommandOptionType.String, required: true },
+                    { name: 'motivo', description: 'Motivo del registro (ej. no quiso pagar)', type: ApplicationCommandOptionType.String, required: true }
+                ]
             }
 
         ]);
@@ -1121,12 +1133,33 @@ client.on('interactionCreate', async function(interaction) {
         if (commandName === 'comandos') {
             return interaction.reply({
                 embeds: [new EmbedBuilder().setTitle('Comandos disponibles').setDescription(
-                    '`/value_brainrot` — consulta precios de brainrots en CLP o USD.\n' +
-                    '`/reglas` — abre el reglamento del servidor.\n' +
-                    '`/panel_middleman` y `/panel_soporte` — paneles de tickets.\n' +
-                    '`/añadir`, `/force_ticket`, `/reseñar`, `/reseñas`, `/repuntuaciones` y `/spin`.'
+                    '`/value_brainrot` — consulta precios de brainrots en CLP o USD.'
                 ).setImage(GIF_COMANDOS)]
             });
+        }
+
+        if (commandName === 'registro') {
+            if (channel.id !== CANAL_REGISTROS_MIDDLEMAN) {
+                return interaction.reply({ content: `Los registros solo se pueden crear y consultar en <#${CANAL_REGISTROS_MIDDLEMAN}>.`, ephemeral: true });
+            }
+
+            const middleman = options.getUser('middleman', true);
+            const resultado = options.getString('resultado', true);
+            const relato = options.getString('relato', true);
+            const motivo = options.getString('motivo', true);
+            const registroEmbed = new EmbedBuilder()
+                .setTitle(`📋 Registro Middleman: ${resultado}`)
+                .setColor(resultado === 'Positivo' ? 0x2ECC71 : 0xE74C3C)
+                .addFields(
+                    { name: '👤 Middleman involucrado', value: `${middleman} (\`${middleman.id}\`)`, inline: false },
+                    { name: '📝 ¿Qué pasó?', value: relato.slice(0, 1024), inline: false },
+                    { name: '📌 Motivo', value: motivo.slice(0, 1024), inline: false },
+                    { name: '🧾 Registrado por', value: `${user}`, inline: true },
+                    { name: '📅 Fecha', value: new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' }), inline: true }
+                )
+                .setFooter({ text: 'Registro de experiencias de Middleman' });
+            await interaction.reply({ embeds: [registroEmbed] });
+            return;
         }
 
         if (commandName === 'value_brainrot') {
