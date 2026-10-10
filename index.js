@@ -7,11 +7,27 @@ const {
     EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
+    AttachmentBuilder,
     PermissionFlagsBits,
     ApplicationCommandOptionType
 } = require('discord.js');
 
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+
+// ============================================================
+// BRAINROT / REGLAS CONFIGURATION (del primer index.js)
+// ============================================================
+const CLP_POR_USD = 959.47;
+const CANAL_REGLAS = '1549237877186236476';
+const GIF_NUEVO = 'https://www.image2url.com/r2/default/gifs/1791161891343-374344e5-6588-4ba9-8aa1-3ebb6eacea57.gif';
+const GIF_REGLAS = GIF_NUEVO;
+const GIF_COMANDOS = GIF_NUEVO;
+const CERBERUS_PATH = path.join(__dirname, 'cerberus.png');
+
 
 const app = express();
 
@@ -35,6 +51,831 @@ const client = new Client({
         Partials.User
     ]
 });
+
+// ============================================================
+// EMOJIS DE MUTACIONES
+// ============================================================
+
+const emojisCache = new Map();
+
+const EMOJIS_VARIANTES = {
+    Normal: '1550522090950627398',
+    Oro: '1550522057878540400',
+    Diamante: '1550522010730365029',
+    Rainbow: '1550521972461670490',
+    Eclipse: '1556077350767173692',
+    Crystal: '1550521934612009131',
+    Phantom: '1550521898016964670',
+    Cyber: '1550521857449656430',
+    Divino: '1550520520087445695',
+    Cursed: '1550521786247020574',
+    Radioactivo: '1550521756706410506',
+    'Yin Yang': '1550521727040233695',
+    Galaxy: '1550521693926199317',
+    Lava: '1550521638808854618',
+    Candy: '1550521666684068030',
+    Bloodroot: '1550521604302311534'
+};
+
+// ============================================================
+// BRAINROTS
+// ============================================================
+
+const BRAINROTS = {
+
+    'Burguro and Fryuro': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-19-9cdf1fa7-760b-49ce-b716-a5dbbc2c2b56.jpg',
+
+        valores: {
+            Normal: '800 - 1K CLP',
+            Oro: '950 - 1150 CLP',
+            Diamante: '1150 - 1.3K CLP',
+            Rainbow: '1.5K - 1.6K CLP',
+            Eclipse: '2K - 2.2K CLP',
+            Crystal: '1.8K CLP',
+            Phantom: '1.8K CLP',
+            Cyber: '1.7K CLP',
+            Divino: '1.8K CLP',
+            Cursed: '1.8K CLP',
+            Radioactivo: '1.8K CLP',
+            'Yin Yang': '1.7K CLP',
+            Galaxy: '1.7K CLP',
+            Lava: '1.5K CLP',
+            Candy: '1.5K CLP',
+            Bloodroot: '2.2K - 2.4K CLP'
+        }
+    },
+
+    'CAPITANO MOBY': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-18-69e1dfe5-3955-46f2-ad2c-bd5880592e9b.jpg',
+
+        valores: {
+            Normal: '800 - 1K CLP',
+            Oro: '950 - 1150 CLP',
+            Diamante: '1150 - 1.3K CLP',
+            Rainbow: '1.5K - 1.6K CLP',
+            Eclipse: '2K - 2.2K CLP',
+            Crystal: '1.8K CLP',
+            Phantom: '1.8K CLP',
+            Cyber: '1.7K CLP',
+            Divino: '1.8K CLP',
+            Cursed: '1.8K CLP',
+            Radioactivo: '1.8K CLP',
+            'Yin Yang': '1.7K CLP',
+            Galaxy: '1.7K CLP',
+            Lava: '1.5K CLP',
+            Candy: '1.5K CLP',
+            Bloodroot: '2.2K - 2.4K CLP'
+        }
+    },
+
+    'Cash or Card': {
+        imagen:
+            'https://cdn.phototourl.com/member/2026-09-19-66017601-5fb4-491d-a6a9-58edbc8987f0.webp',
+
+        valores: {
+            Normal: '400 CLP',
+            Oro: '500 CLP',
+            Diamante: '600 CLP',
+            Rainbow: '1.3K CLP',
+            Eclipse: '2.3K CLP',
+            Crystal: '1.8K - 2K CLP',
+            Phantom: '1.8K - 2K CLP',
+            Cyber: '1.8K CLP',
+            Divino: '1.8K CLP',
+            Cursed: '1.8K CLP',
+            Radioactivo: '1.6K CLP',
+            'Yin Yang': '1.7K CLP',
+            Galaxy: '1.7K CLP',
+            Lava: '1.3K CLP',
+            Candy: '1.3K CLP',
+            Bloodroot: '2.2K CLP'
+        }
+    },
+
+    'Cerberus': {
+        imagen: null,
+
+        valores: {
+            Normal: '1.5K - 1.7K CLP',
+            Oro: '1.8K CLP',
+            Diamante: '2K CLP',
+            Rainbow: '2.8K - 3K CLP',
+            Eclipse: '4.6K CLP',
+            Crystal: '4.4K CLP',
+            Phantom: '4.4K CLP',
+            Cyber: '4.3K CLP',
+            Divino: '4.2K CLP',
+            Cursed: '4.2K CLP',
+            Radioactivo: '4K CLP',
+            'Yin Yang': '4K CLP',
+            Galaxy: '4K CLP',
+            Lava: '3.7K CLP',
+            Candy: '3.7K CLP',
+            Bloodroot: '4.5K CLP'
+        }
+    },
+
+    'Cooki and milki': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-19-37abb7e0-4cc4-4cfc-a4db-5bde0056e850.jpg',
+
+        valores: {
+            Normal: '2K - 2.5K CLP',
+            Oro: '2.5K - 2.6K CLP',
+            Diamante: '2.5K - 2.7K CLP',
+            Rainbow: '3K - 3.5K CLP',
+            Eclipse: 'NO HAY EXISTENCIAS',
+            Crystal: 'NO HAY EXISTENCIAS',
+            Phantom: 'NO HAY EXISTENCIAS',
+            Cyber: 'NO HAY EXISTENCIAS',
+            Divino: '6K CLP',
+            Cursed: '6K CLP',
+            Radioactivo: '4K CLP',
+            'Yin Yang': '4K CLP',
+            Galaxy: '4K CLP',
+            Lava: '3.7K CLP',
+            Candy: '3.7K CLP',
+            Bloodroot: '4.5K CLP'
+        }
+    },
+
+    'Dragon Cannelloni': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-18-20490fbc-3425-4401-8060-f7948eff136c.jpg',
+
+        valores: {
+            Normal: '7.5K - 8K CLP',
+            Oro: '8.5K - 9K CLP',
+            Diamante: '9.5K - 10K CLP',
+            Rainbow: '15K CLP',
+            Eclipse: '22K CLP',
+            Crystal: '19K - 20K CLP',
+            Phantom: '19K - 20K CLP',
+            Cyber: '18.5K - 19.5K CLP',
+            Divino: '18K - 18.5K CLP',
+            Cursed: '18K - 18.5K CLP',
+            Radioactivo: '17.5K - 18K CLP',
+            'Yin Yang': '18K - 18.5K CLP',
+            Galaxy: '18K - 18.5K CLP',
+            Lava: '15K - 16K CLP',
+            Candy: '15K - 16K CLP',
+            Bloodroot: '23K CLP'
+        }
+    },
+
+    'Festive 67': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-19-7cd4e713-1e6c-4b05-8a97-bddf9466f1b0.jpg',
+
+        valores: {
+            Normal: '1K CLP',
+            Oro: 'NO EXISTE',
+            Diamante: 'NO EXISTE',
+            Rainbow: 'NO EXISTE',
+            Eclipse: 'NO EXISTE',
+            Crystal: 'NO EXISTE',
+            Phantom: 'NO EXISTE',
+            Cyber: 'NO EXISTE',
+            Divino: 'NO EXISTE',
+            Cursed: 'NO EXISTE',
+            Radioactivo: 'NO EXISTE',
+            'Yin Yang': 'NO EXISTE',
+            Galaxy: 'NO EXISTE',
+            Lava: 'NO EXISTE',
+            Candy: 'NO EXISTE',
+            Bloodroot: 'NO EXISTE'
+        }
+    },
+
+    'Garama and Madungdung': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-18-c964cf36-969a-4f18-a071-88c9213dc519.jpg',
+
+        valores: {
+            Normal: '450 CLP',
+            Oro: '550 CLP',
+            Diamante: '650 CLP',
+            Rainbow: '2.2K - 2.4K CLP',
+            Eclipse: '2.7K - 3K CLP',
+            Crystal: '2.5K - 2.6K CLP',
+            Phantom: '2.5K - 2.6K CLP',
+            Cyber: '2.5K CLP',
+            Divino: '2.5K CLP',
+            Cursed: '2.5K CLP',
+            Radioactivo: '2.5K CLP',
+            'Yin Yang': 'Precio no especificado',
+            Galaxy: '2.5K CLP',
+            Lava: '2.2K CLP',
+            Candy: '2.2K CLP',
+            Bloodroot: '2.6K - 2.8K CLP'
+        }
+    },
+
+    'La secret combinación': {
+        imagen:
+            'https://cdn.phototourl.com/free/2026-09-19-ad906f1d-da8e-4b4a-bd3b-e1696bd39c3d.jpg',
+
+        valores: {
+            Normal: '800 - 1K CLP',
+            Oro: '950 - 1150 CLP',
+            Diamante: '1150 - 1.3K CLP',
+            Rainbow: '1.5K - 1.6K CLP',
+            Eclipse: '2K - 2.2K CLP',
+            Crystal: '1.8K CLP',
+            Phantom: '1.8K CLP',
+            Cyber: '1.7K CLP',
+            Divino: '1.8K CLP',
+            Cursed: '1.8K CLP',
+            Radioactivo: '1.8K CLP',
+            'Yin Yang': '1.7K CLP',
+            Galaxy: '1.7K CLP',
+            Lava: '1.5K CLP',
+            Candy: '1.5K CLP',
+            Bloodroot: '2.2K - 2.4K CLP'
+        }
+    }
+};
+
+// ============================================================
+// ORDEN DE BRAINROTS
+// ============================================================
+
+const NOMBRES_BRAINROTS = [
+    'Burguro and Fryuro',
+    'CAPITANO MOBY',
+    'Cash or Card',
+    'Cerberus',
+    'Cooki and milki',
+    'Dragon Cannelloni',
+    'Festive 67',
+    'Garama and Madungdung',
+    'La secret combinación'
+];
+
+// ============================================================
+// ORDEN DE MUTACIONES
+// ============================================================
+
+const VARIANTES = [
+    'Normal',
+    'Oro',
+    'Diamante',
+    'Rainbow',
+    'Eclipse',
+    'Crystal',
+    'Phantom',
+    'Cyber',
+    'Divino',
+    'Cursed',
+    'Radioactivo',
+    'Yin Yang',
+    'Galaxy',
+    'Lava',
+    'Candy',
+    'Bloodroot'
+];
+
+// ============================================================
+// CONVERSIÓN CLP -> USD
+// ============================================================
+
+function convertirPrecioUSD(texto) {
+
+    if (
+        texto === 'NO EXISTE' ||
+        texto === 'NO HAY EXISTENCIAS' ||
+        texto === 'Precio no especificado'
+    ) {
+        return texto;
+    }
+
+    return texto.replace(
+        /(\d+(?:\.\d+)?)(K)?/gi,
+        (match, numero, k) => {
+
+            let valor =
+                Number(numero);
+
+            if (k) {
+                valor *= 1000;
+            }
+
+            const usd =
+                valor / CLP_POR_USD;
+
+            if (usd >= 1000) {
+                return `$${(usd / 1000).toFixed(1)}K`;
+            }
+
+            if (usd >= 100) {
+                return `$${Math.round(usd)}`;
+            }
+
+            return `$${usd.toFixed(2)}`;
+        }
+    );
+}
+
+// ============================================================
+// CARGAR EMOJIS
+// ============================================================
+
+async function cargarEmojisBrainrot() {
+
+    for (
+        const guild of client.guilds.cache.values()
+    ) {
+
+        try {
+
+            const emojis =
+                await guild.emojis.fetch();
+
+            for (
+                const emoji of emojis.values()
+            ) {
+
+                emojisCache.set(
+                    emoji.id,
+                    emoji
+                );
+            }
+
+            console.log(
+                `Emojis cargados de ${guild.name}: ${emojis.size}`
+            );
+
+        } catch (error) {
+
+            console.error(
+                `No se pudieron cargar los emojis de ${guild.name}:`,
+                error.message
+            );
+        }
+    }
+}
+
+function obtenerEmoji(nombre) {
+
+    const id =
+        EMOJIS_VARIANTES[nombre];
+
+    if (!id) {
+        return '';
+    }
+
+    const emoji =
+        emojisCache.get(id);
+
+    if (emoji) {
+        return `<:${emoji.name}:${emoji.id}>`;
+    }
+
+    return `<:emoji:${id}>`;
+}
+
+// ============================================================
+// ARCHIVOS DEL BRAINROT
+// ============================================================
+
+function obtenerArchivosBrainrot(nombre) {
+
+    if (
+        nombre === 'Cerberus' &&
+        fs.existsSync(CERBERUS_PATH)
+    ) {
+
+        return [
+            new AttachmentBuilder(
+                CERBERUS_PATH,
+                {
+                    name: 'cerberus.png'
+                }
+            )
+        ];
+    }
+
+    return [];
+}
+
+
+// ============================================================
+// PANEL PRINCIPAL DE REGLAS
+// ============================================================
+
+function crearMenuReglasEmbed() {
+
+    return new EmbedBuilder()
+
+        .setTitle(
+            'Reglamento del servidor'
+        )
+
+        .setDescription(
+            'Bienvenido al reglamento del servidor.\n\n' +
+            'Selecciona en el menú la categoría de reglas que quieres consultar.\n\n' +
+            '**Importante:** al seleccionar una opción, se abrirá un panel privado que solamente tú podrás ver.'
+        )
+
+        .setImage(
+            GIF_REGLAS
+        )
+
+        .setFooter({
+            text:
+                'Selecciona una categoría para comenzar.'
+        });
+}
+
+// ============================================================
+// REGLAS GENERALES
+// ============================================================
+
+function crearReglasGeneralesEmbed() {
+
+    return new EmbedBuilder()
+
+        .setTitle(
+            'Reglas en General'
+        )
+
+        .setDescription(`
+**1. Respeto mutuo entre los miembros**
+- No insultarse.
+- No burlarse de alguien.
+- No sacar cosas personales.
+- No sacar a relucir ni utilizar asuntos personales de otras personas.
+- No involucrar ni mencionar a familiares ajenos con intención de molestar, provocar o generar conflictos.
+
+**2. Hostigamiento o bromas**
+- No molestar excesivamente con la misma broma.
+- No hostigar a alguien para hacer algo.
+- No pasarse del límite con alguna broma o llevarla a mayores.
+- Si alguien pide que dejen de molestarlo, se debe respetar.
+
+**3. No generar conflictos**
+- Evitar crear conflictos innecesarios.
+- Resolver respetuosamente o acudir a staff/ticket.
+- No continuar una discusión solamente para provocar.
+- Las diferencias entre miembros no deben afectar al resto de la comunidad.
+
+**4. Contenido inapropiado**
+- Está prohibido mostrar o consumir contenido +18, ya que hay menores en el servidor.
+- No mostrar contenido brutal, real o ficticio, como asesinatos, violaciones o contenido sangriento.
+- No enviar contenido incómodo o acosador.
+- No compartir contenido ilegal.
+
+**5. Publicidad y enlaces**
+- No publicitar otros servidores, redes sociales, canales o proyectos sin autorización del staff.
+- No enviar enlaces sospechosos.
+- No enviar un enlace sin saber qué contiene o qué hace.
+
+**6. Respeto al staff**
+- Respetar las decisiones del staff en votaciones, anuncios y situaciones de moderación.
+- Si no estás de acuerdo con una sanción, puedes hablar con el staff.
+- No acosar, insultar ni provocar al staff por una sanción.
+
+**7. Trampas, estafas o engaños**
+- No engañar, estafar ni hacer trampas contra miembros u otras personas.
+- Realizar transacciones con precaución; se puede utilizar un Middleman.
+- Reportar inmediatamente las estafas o acciones prohibidas aportando pruebas.
+
+**8. Sentido común**
+- No todo comportamiento negativo tiene que estar escrito explícitamente.
+- El staff puede intervenir cuando una acción perjudique a la comunidad.
+- Piensa antes de actuar.
+
+**9. Sanciones**
+Las sanciones pueden incluir:
+- Advertencia.
+- Eliminación de mensajes.
+- Restricción temporal de canales.
+- Timeout.
+- Kick.
+- Ban temporal o permanente.
+
+La gravedad y duración de una sanción dependerá de la situación y de la decisión de moderación.
+
+**Importante:**
+Estas reglas existen para mantener una comunidad tranquila, segura y respetuosa, no para limitar innecesariamente a los miembros.
+
+Al permanecer en el servidor se entiende que conoces y respetas estas reglas.
+        `)
+
+        .setImage(
+            GIF_REGLAS
+        )
+
+        .setFooter({
+            text:
+                'Panel privado de reglas generales'
+        });
+}
+
+// ============================================================
+// REGLAS MIDDLEMAN
+// ============================================================
+
+function crearReglasMiddlemanEmbed() {
+
+    return new EmbedBuilder()
+
+        .setTitle(
+            'Reglas Middleman'
+        )
+
+        .setDescription(`
+**1. Evitar estafas y acudir a algo más confiable**
+- Utiliza Middleman para ventas o compras.
+- Solicita un Middleman para PVP o apuestas.
+
+**2. Pagar al Middleman por la duración del ticket**
+- El Middleman recibe una recompensa por el tiempo y trabajo realizado.
+- Después de 5-10 minutos, corresponde una recompensa por el tiempo empleado.
+- La recompensa debe entregarse de buena voluntad.
+- Si se trata de un PVP y el Middleman debe esperar durante mucho tiempo, debe recibir un pago.
+
+**3. Respeto al Middleman**
+- Respeta al Middleman, ya que hace que las ventas, compras, PVP y apuestas sean más confiables.
+- No insultar al Middleman si tarda en atender o menospreciar su trabajo.
+
+**4. Tickets Middleman**
+- Crea un ticket cuando necesites una solicitud seria de Middleman.
+- No crear tickets para molestar, trolear o jugar.
+
+**5. Entrega de objetos**
+- El vendedor entrega el objeto vendido al Middleman para que lo mantenga mientras el comprador paga la cantidad acordada.
+- En cuentas de juegos o aplicaciones, el Middleman mantiene el dinero mientras el vendedor transfiere la cuenta y cambia el correo, contraseña y correo de recuperación. Una vez realizados todos los cambios, el vendedor recibe el pago.
+        `)
+
+        .setImage(
+            GIF_REGLAS
+        )
+
+        .setFooter({
+            text:
+                'Panel privado de reglas Middleman'
+        });
+}
+
+// ============================================================
+// MENÚ PÚBLICO DE REGLAS
+// ============================================================
+
+function crearMenuReglas() {
+
+    return new StringSelectMenuBuilder()
+
+        .setCustomId(
+            'reglas_menu_publico'
+        )
+
+        .setPlaceholder(
+            'Selecciona una categoría'
+        )
+
+        .addOptions(
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Reglas en General'
+                )
+                .setDescription(
+                    'Consulta las reglas generales del servidor.'
+                )
+                .setValue(
+                    'general'
+                )
+                .setEmoji(
+                    '📜'
+                ),
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Reglas Middleman'
+                )
+                .setDescription(
+                    'Consulta las reglas para Middleman.'
+                )
+                .setValue(
+                    'middleman'
+                )
+                .setEmoji(
+                    '🤝'
+                )
+        );
+}
+
+// ============================================================
+// MENÚ PRIVADO DE REGLAS
+// ============================================================
+
+function crearMenuReglasPrivado() {
+
+    return new StringSelectMenuBuilder()
+
+        .setCustomId(
+            'reglas_privado'
+        )
+
+        .setPlaceholder(
+            'Cambiar categoría de reglas'
+        )
+
+        .addOptions(
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Reglas en General'
+                )
+                .setDescription(
+                    'Ver las reglas generales.'
+                )
+                .setValue(
+                    'general'
+                )
+                .setEmoji(
+                    '📜'
+                ),
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Reglas Middleman'
+                )
+                .setDescription(
+                    'Ver las reglas Middleman.'
+                )
+                .setValue(
+                    'middleman'
+                )
+                .setEmoji(
+                    '🤝'
+                )
+        );
+}
+
+
+// ============================================================
+// MENÚ DE MONEDA
+// ============================================================
+
+function crearMenuMoneda(userId) {
+
+    return new StringSelectMenuBuilder()
+
+        .setCustomId(
+            `brainrot_currency_${userId}`
+        )
+
+        .setPlaceholder(
+            'Selecciona una moneda'
+        )
+
+        .addOptions(
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Pesos chilenos (CLP)'
+                )
+                .setDescription(
+                    'Ver los precios en pesos chilenos.'
+                )
+                .setValue(
+                    'CLP'
+                ),
+
+            new StringSelectMenuOptionBuilder()
+                .setLabel(
+                    'Dólares (USD)'
+                )
+                .setDescription(
+                    'Ver los precios convertidos a dólares.'
+                )
+                .setValue(
+                    'USD'
+                )
+        );
+}
+
+// ============================================================
+// MENÚ DE BRAINROTS
+// ============================================================
+
+function crearMenuBrainrots(
+    userId,
+    moneda
+) {
+
+    return new StringSelectMenuBuilder()
+
+        .setCustomId(
+            `brainrot_select_${userId}_${moneda}`
+        )
+
+        .setPlaceholder(
+            'Selecciona un brainrot'
+        )
+
+        .addOptions(
+
+            NOMBRES_BRAINROTS.map(
+                nombre =>
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel(nombre)
+                        .setValue(nombre)
+            )
+        );
+}
+
+// ============================================================
+// EMBED BRAINROT
+// ============================================================
+
+function crearEmbedBrainrot(
+    nombre,
+    moneda
+) {
+
+    const brainrot =
+        BRAINROTS[nombre];
+
+    if (!brainrot) {
+
+        return new EmbedBuilder()
+            .setTitle(
+                'Brainrot no encontrado'
+            )
+            .setDescription(
+                'No se encontraron datos para ese brainrot.'
+            );
+    }
+
+    const embed =
+        new EmbedBuilder()
+            .setTitle(
+                nombre
+            )
+            .setFooter({
+                text:
+                    `Moneda: ${moneda}`
+            });
+
+    if (
+        nombre === 'Cerberus'
+    ) {
+
+        embed.setImage(
+            'attachment://cerberus.png'
+        );
+
+    } else if (
+        brainrot.imagen
+    ) {
+
+        embed.setThumbnail(
+            brainrot.imagen
+        );
+    }
+
+    let descripcion = '';
+
+    for (
+        const variante of VARIANTES
+    ) {
+
+        let precio =
+            brainrot.valores[variante] ??
+            'NO EXISTE';
+
+        if (
+            moneda === 'USD'
+        ) {
+
+            precio =
+                convertirPrecioUSD(
+                    precio
+                );
+        }
+
+        const emoji =
+            obtenerEmoji(
+                variante
+            );
+
+        descripcion +=
+            `${emoji} **${variante}:** ${precio}\n`;
+    }
+
+    embed.setDescription(
+        descripcion
+    );
+
+    return embed;
+}
+
 
 // ============================================================
 // IDS DE CANALES
@@ -229,6 +1070,18 @@ client.once('ready', async function() {
             {
                 name: 'spin',
                 description: 'Ruleta del perdón 50/50'
+            },
+            {
+                name: 'comandos',
+                description: 'Muestra los comandos disponibles.'
+            },
+            {
+                name: 'value_brainrot',
+                description: 'Consulta el valor de los brainrots.'
+            },
+            {
+                name: 'reglas',
+                description: 'Muestra las reglas del servidor.'
             }
 
         ]);
@@ -260,6 +1113,39 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const member = interaction.member;
         const guild = interaction.guild;
+
+        // ====================================================
+        // COMANDOS BRAINROT Y REGLAS
+        // ====================================================
+
+        if (commandName === 'comandos') {
+            return interaction.reply({
+                embeds: [new EmbedBuilder().setTitle('Comandos disponibles').setDescription(
+                    '`/value_brainrot` — consulta precios de brainrots en CLP o USD.\n' +
+                    '`/reglas` — abre el reglamento del servidor.\n' +
+                    '`/panel_middleman` y `/panel_soporte` — paneles de tickets.\n' +
+                    '`/añadir`, `/force_ticket`, `/reseñar`, `/reseñas`, `/repuntuaciones` y `/spin`.'
+                ).setImage(GIF_COMANDOS)]
+            });
+        }
+
+        if (commandName === 'value_brainrot') {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [new EmbedBuilder().setTitle('Valor de Brainrots').setDescription('Selecciona la moneda para consultar los precios.')],
+                components: [new ActionRowBuilder().addComponents(crearMenuMoneda(user.id))]
+            });
+        }
+
+        if (commandName === 'reglas') {
+            if (channel.id !== CANAL_REGLAS) {
+                return interaction.reply({content: `Usa este comando en <#${CANAL_REGLAS}>.`, ephemeral: true});
+            }
+            return interaction.reply({
+                embeds: [crearMenuReglasEmbed()],
+                components: [new ActionRowBuilder().addComponents(crearMenuReglas())]
+            });
+        }
 
         // ====================================================
         // PANEL MIDDLEMAN
@@ -989,6 +1875,53 @@ client.on('interactionCreate', async function(interaction) {
 
             return interaction.reply({
                 embeds: [embedTop]
+            });
+        }
+    }
+
+    // ========================================================
+    // MENÚS DESPLEGABLES: REGLAS Y VALORES BRAINROT
+    // ========================================================
+
+    if (interaction.isStringSelectMenu()) {
+        const customId = interaction.customId;
+
+        if (customId === 'reglas_menu_publico' || customId === 'reglas_privado') {
+            const embed = interaction.values[0] === 'general'
+                ? crearReglasGeneralesEmbed()
+                : crearReglasMiddlemanEmbed();
+            const components = [new ActionRowBuilder().addComponents(crearMenuReglasPrivado())];
+            if (customId === 'reglas_menu_publico') {
+                return interaction.reply({embeds: [embed], components, ephemeral: true});
+            }
+            return interaction.update({embeds: [embed], components});
+        }
+
+        if (customId.startsWith('brainrot_currency_')) {
+            const ownerId = customId.slice('brainrot_currency_'.length);
+            if (interaction.user.id !== ownerId) {
+                return interaction.reply({content: 'Este menú no te pertenece.', ephemeral: true});
+            }
+            const moneda = interaction.values[0];
+            return interaction.update({
+                embeds: [new EmbedBuilder().setTitle('Selecciona un Brainrot').setDescription(`Selecciona un brainrot para ver el precio en ${moneda}.`)],
+                components: [new ActionRowBuilder().addComponents(crearMenuBrainrots(ownerId, moneda))]
+            });
+        }
+
+        if (customId.startsWith('brainrot_select_')) {
+            const partes = customId.split('_');
+            const ownerId = partes[2];
+            const moneda = partes[3];
+            if (interaction.user.id !== ownerId) {
+                return interaction.reply({content: 'Este menú no te pertenece.', ephemeral: true});
+            }
+            const nombre = interaction.values[0];
+            const files = obtenerArchivosBrainrot(nombre);
+            return interaction.update({
+                embeds: [crearEmbedBrainrot(nombre, moneda)],
+                components: [new ActionRowBuilder().addComponents(crearMenuBrainrots(ownerId, moneda))],
+                files
             });
         }
     }
@@ -1971,6 +2904,10 @@ client.on('interactionCreate', async function(interaction) {
 // LOGIN
 // ============================================================
 
-client.login(
-    process.env.TOKEN
-);
+const DISCORD_TOKEN = process.env.TOKEN;
+if (!DISCORD_TOKEN) {
+    console.error('❌ Falta TOKEN en el archivo .env');
+    process.exit(1);
+}
+
+client.login(DISCORD_TOKEN);
