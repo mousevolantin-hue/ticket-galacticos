@@ -1084,15 +1084,15 @@ client.once('ready', async function() {
             },
             {
                 name: 'registro',
-                description: 'Registrar una experiencia con un Middleman',
+                description: 'Registrar una experiencia de un ticket de Middleman',
                 options: [
-                    { name: 'middleman', description: 'Middleman involucrado', type: ApplicationCommandOptionType.User, required: true },
+                    { name: 'ticket', description: 'Canal del ticket que se va a registrar', type: ApplicationCommandOptionType.Channel, required: true, channel_types: [0] },
                     { name: 'resultado', description: 'Resultado del caso', type: ApplicationCommandOptionType.String, required: true, choices: [
                         { name: 'Positivo', value: 'Positivo' },
                         { name: 'Negativo', value: 'Negativo' }
                     ]},
-                    { name: 'relato', description: 'Cuenta qué pasó en el ticket', type: ApplicationCommandOptionType.String, required: true },
-                    { name: 'motivo', description: 'Motivo del registro (ej. no quiso pagar)', type: ApplicationCommandOptionType.String, required: true }
+                    { name: 'relato', description: 'Relata la experiencia y qué pasó', type: ApplicationCommandOptionType.String, required: true },
+                    { name: 'motivo', description: 'Motivo del registro', type: ApplicationCommandOptionType.String, required: true }
                 ]
             }
 
@@ -1139,26 +1139,47 @@ client.on('interactionCreate', async function(interaction) {
         }
 
         if (commandName === 'registro') {
+            const ticket = options.getChannel('ticket', true);
+            const resultado = options.getString('resultado', true);
+            const relato = options.getString('relato', true).trim();
+            const motivo = options.getString('motivo', true).trim();
+
+            // Solo se permite registrar desde el canal designado, pero el registro
+            // se basa en el ticket seleccionado por el Middleman.
             if (channel.id !== CANAL_REGISTROS_MIDDLEMAN) {
-                return interaction.reply({ content: `Los registros solo se pueden crear y consultar en <#${CANAL_REGISTROS_MIDDLEMAN}>.`, ephemeral: true });
+                return interaction.reply({ content: `Por seguridad, usa /registro en <#${CANAL_REGISTROS_MIDDLEMAN}>.`, ephemeral: true });
             }
 
-            const middleman = options.getUser('middleman', true);
-            const resultado = options.getString('resultado', true);
-            const relato = options.getString('relato', true);
-            const motivo = options.getString('motivo', true);
+            const datosTicket = ticketsBD.get(ticket.id);
+            if (!ticket.name.startsWith('ticket-') || !datosTicket || datosTicket.tipo !== 'middleman') {
+                return interaction.reply({ content: '❌ No encuentro los datos de ese ticket. Selecciona un ticket de Middleman activo que el bot haya creado y que no se haya perdido por reiniciar el bot.', ephemeral: true });
+            }
+
+            if (!esStaff(member) || !datosTicket.reclamadoPor || datosTicket.reclamadoPor.id !== user.id) {
+                return interaction.reply({ content: '❌ Solo el Middleman que reclamó ese ticket puede registrar su experiencia.', ephemeral: true });
+            }
+
+            const creador = datosTicket.creador;
+            const compradorVendedor = datosTicket.usuarioAñadido;
+            if (!creador || !compradorVendedor || creador.id === compradorVendedor.id) {
+                return interaction.reply({ content: '❌ No puedo identificar a los dos involucrados. Comprueba que el ticket tenga creador y que el Middleman haya usado /añadir para agregar al otro involucrado.', ephemeral: true });
+            }
+
             const registroEmbed = new EmbedBuilder()
                 .setTitle(`📋 Registro Middleman: ${resultado}`)
                 .setColor(resultado === 'Positivo' ? 0x2ECC71 : 0xE74C3C)
                 .addFields(
-                    { name: '👤 Middleman involucrado', value: `${middleman} (\`${middleman.id}\`)`, inline: false },
-                    { name: '📝 ¿Qué pasó?', value: relato.slice(0, 1024), inline: false },
-                    { name: '📌 Motivo', value: motivo.slice(0, 1024), inline: false },
-                    { name: '🧾 Registrado por', value: `${user}`, inline: true },
+                    { name: '🎫 Ticket', value: `<#${ticket.id}>`, inline: false },
+                    { name: '👤 Involucrado 1 (creador del ticket)', value: `${creador} (\`${creador.id}\`)`, inline: true },
+                    { name: '👤 Involucrado 2 (añadido al ticket)', value: `${compradorVendedor} (\`${compradorVendedor.id}\`)`, inline: true },
+                    { name: '🤝 Middleman que atendió', value: `${user} (\`${user.id}\`)`, inline: false },
+                    { name: '📝 Relato', value: relato.slice(0, 1024) || 'Sin relato', inline: false },
+                    { name: '📌 Motivo', value: motivo.slice(0, 1024) || 'Sin motivo', inline: false },
                     { name: '📅 Fecha', value: new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' }), inline: true }
                 )
-                .setFooter({ text: 'Registro de experiencias de Middleman' });
-            await interaction.reply({ embeds: [registroEmbed] });
+                .setFooter({ text: 'Registro creado por el Middleman que atendió el ticket' });
+
+            await interaction.reply({ embeds: [registroEmbed], allowedMentions: { parse: [] } });
             return;
         }
 
@@ -1348,6 +1369,12 @@ client.on('interactionCreate', async function(interaction) {
                         AttachFiles: true
                     }
                 );
+
+                const datosTicket = ticketsBD.get(channel.id);
+                if (datosTicket) {
+                    datosTicket.usuarioAñadido = usuarioAAñadir;
+                    datosTicket.usuarioAñadidoPor = user;
+                }
 
                 return interaction.reply({
                     content:
