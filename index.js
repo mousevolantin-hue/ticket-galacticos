@@ -914,6 +914,33 @@ const ROLES_SOPORTE_IDS = [
 const ticketsBD = new Map();
 const resenasBD = new Map();
 
+// Las reseñas se guardan en un JSON junto al index.js para sobrevivir reinicios.
+const ARCHIVO_RESENAS = path.join(__dirname, 'resenas.json');
+
+function cargarResenas() {
+    try {
+        if (!fs.existsSync(ARCHIVO_RESENAS)) return;
+        const contenido = fs.readFileSync(ARCHIVO_RESENAS, 'utf8');
+        const guardadas = JSON.parse(contenido || '{}');
+        for (const [usuarioId, reseñas] of Object.entries(guardadas)) {
+            if (Array.isArray(reseñas)) resenasBD.set(usuarioId, reseñas);
+        }
+        console.log('✅ Reseñas cargadas desde resenas.json');
+    } catch (error) {
+        console.error('❌ No se pudieron cargar las reseñas:', error);
+    }
+}
+
+function guardarResenas() {
+    fs.writeFileSync(
+        ARCHIVO_RESENAS,
+        JSON.stringify(Object.fromEntries(resenasBD.entries()), null, 2),
+        'utf8'
+    );
+}
+
+cargarResenas();
+
 let contadorMiddleman = 1;
 let contadorSoporte = 1;
 
@@ -998,9 +1025,6 @@ client.once('ready', async function() {
             {
                 name: 'añadir',
                 description: 'Añadir un usuario al ticket',
-
-                default_member_permissions:
-                    PermissionFlagsBits.ManageChannels.toString(),
 
                 options: [
                     {
@@ -1646,6 +1670,22 @@ client.on('interactionCreate', async function(interaction) {
 
             }
 
+            // También comprueba reseñas guardadas, incluso después de reiniciar el bot.
+            const ticketIdResena = channel.id;
+            const reseñaDuplicada = Array.from(resenasBD.values())
+                .flat()
+                .some((resena) =>
+                    resena.ticketId === ticketIdResena &&
+                    resena.autorId === user.id
+                );
+
+            if (reseñaDuplicada) {
+                return interaction.reply({
+                    content: '❌ Ya has registrado tu reseña para este ticket.',
+                    ephemeral: true
+                });
+            }
+
             const estrellas =
                 options.getInteger('estrellas');
 
@@ -1669,9 +1709,27 @@ client.on('interactionCreate', async function(interaction) {
                     autorId: user.id,
                     estrellas: estrellas,
                     comentario: comentario,
-                    tipoOrigen: origen
+                    tipoOrigen: origen,
+                    ticketId: channel.id,
+                    fecha: new Date().toISOString()
 
                 });
+
+            try {
+                guardarResenas();
+            } catch (error) {
+                const reseñasUsuario = resenasBD.get(objetivo.id) || [];
+                const indice = reseñasUsuario.findIndex((resena) =>
+                    resena.ticketId === channel.id && resena.autorId === user.id
+                );
+                if (indice !== -1) reseñasUsuario.splice(indice, 1);
+                if (reseñasUsuario.length === 0) resenasBD.delete(objetivo.id);
+                console.error('❌ Error guardando reseña:', error);
+                return interaction.reply({
+                    content: '❌ No se pudo guardar la reseña en el archivo. Inténtalo de nuevo.',
+                    ephemeral: true
+                });
+            }
 
             if (datos) {
 
