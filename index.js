@@ -622,6 +622,38 @@ function crearReglasMiddlemanEmbed() {
         });
 }
 
+
+function crearReglasSancionesEmbed() {
+    return new EmbedBuilder()
+        .setTitle('Reglas de sanciones')
+        .setDescription(`
+**1. Pruebas y contexto**
+- Toda sanción debe basarse en pruebas verificables y en el contexto completo de lo ocurrido.
+- Antes de decidir, el staff debe revisar la conversación y los mensajes relevantes, no solo una captura aislada.
+
+**2. Imparcialidad**
+- Está prohibido sancionar por venganza, favoritismo o conflictos personales.
+- El staff debe actuar con imparcialidad y explicar claramente el motivo de sus decisiones.
+
+**3. Analizar el conflicto**
+- No corresponde abrir un ticket para sancionar a alguien únicamente porque respondió después de que otra persona lo provocara.
+- Se debe distinguir entre quién inició el conflicto y cómo respondió cada participante. Esto no exime automáticamente a ninguna persona de responsabilidad.
+
+**4. Proporcionalidad**
+- Las sanciones deben ser proporcionales a la gravedad, las pruebas disponibles y los antecedentes relevantes.
+- Se debe priorizar la coherencia entre casos similares y prevenir futuros conflictos.
+
+**5. Denuncias y pruebas**
+- Las denuncias falsas, las pruebas manipuladas y las capturas editadas para engañar al staff pueden ser sancionables.
+- Aporta el contexto necesario y no ocultes mensajes relevantes.
+
+**6. Objetivo**
+- El sistema busca justicia, coherencia y prevención, no alimentar discusiones ni tomar partido por amistades.
+        `)
+        .setImage(GIF_REGLAS)
+        .setFooter({ text: 'Panel privado de reglas de sanciones' });
+}
+
 // ============================================================
 // MENÚ PÚBLICO DE REGLAS
 // ============================================================
@@ -666,7 +698,12 @@ function crearMenuReglas() {
                 )
                 .setEmoji(
                     '🤝'
-                )
+                ),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Reglas de sanciones')
+                .setDescription('Consulta los criterios para aplicar sanciones.')
+                .setValue('sanciones')
+                .setEmoji('⚖️')
         );
 }
 
@@ -714,7 +751,12 @@ function crearMenuReglasPrivado() {
                 )
                 .setEmoji(
                     '🤝'
-                )
+                ),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Reglas de sanciones')
+                .setDescription('Consulta los criterios para aplicar sanciones.')
+                .setValue('sanciones')
+                .setEmoji('⚖️')
         );
 }
 
@@ -1000,6 +1042,322 @@ function esStaffSuperior(member) {
     );
 }
 
+
+// ============================================================
+// MODERACIÓN: almacenamiento persistente y validaciones
+// ============================================================
+const crypto = require('crypto');
+const ARCHIVO_CASOS = path.join(__dirname, 'casos.json');
+const ARCHIVO_SANCIONES = path.join(__dirname, 'sanciones.json');
+const confirmacionesModeracion = new Map();
+let colaGuardadoModeracion = Promise.resolve();
+
+function leerJsonSeguro(archivo, valorInicial) {
+    try {
+        if (!fs.existsSync(archivo)) return valorInicial;
+        const raw = fs.readFileSync(archivo, 'utf8');
+        if (!raw.trim()) return valorInicial;
+        return JSON.parse(raw);
+    } catch (error) {
+        console.error(`JSON inválido en ${path.basename(archivo)}. Se intentará preservar una copia de respaldo:`, error.message);
+        try {
+            const respaldo = `${archivo}.corrupto-${Date.now()}.bak`;
+            fs.copyFileSync(archivo, respaldo, fs.constants.COPYFILE_EXCL);
+            console.error(`Copia de respaldo creada: ${path.basename(respaldo)}`);
+        } catch (backupError) {
+            console.error('No se pudo crear el respaldo del JSON inválido:', backupError.message);
+        }
+        return valorInicial;
+    }
+}
+let casosModeracion = leerJsonSeguro(ARCHIVO_CASOS, []);
+let advertenciasModeracion = leerJsonSeguro(ARCHIVO_SANCIONES, []);
+if (!Array.isArray(casosModeracion)) casosModeracion = [];
+if (!Array.isArray(advertenciasModeracion)) advertenciasModeracion = [];
+
+function guardarJsonAtomico(archivo, datos) {
+    const temporal = `${archivo}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporal, JSON.stringify(datos, null, 2), { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporal, archivo);
+}
+function persistirModeracion() {
+    // Operación síncrona y atómica por archivo: no hay escrituras concurrentes que se pisen.
+    guardarJsonAtomico(ARCHIVO_CASOS, casosModeracion);
+    guardarJsonAtomico(ARCHIVO_SANCIONES, advertenciasModeracion);
+}
+function nuevoIdCaso() {
+    let id;
+    do { id = `C-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`; }
+    while (casosModeracion.some(c => c.id === id) || advertenciasModeracion.some(c => c.id === id));
+    return id;
+}
+function validarMotivo(motivo) {
+    return typeof motivo === 'string' && motivo.trim().length >= 3 && motivo.trim().length <= 1000;
+}
+function parsearDuracion(texto) {
+    const match = /^(\d+)\s*(m|min|minuto|minutos|h|hr|hora|horas|d|dia|dias|w|semana|semanas|y|a|ano|años)$/i.exec(String(texto || '').trim());
+    if (!match) return null;
+    const n = Number(match[1]);
+    if (!Number.isSafeInteger(n) || n < 1) return null;
+    const unidad = match[2].toLowerCase();
+    const factor = /^(m|min|minuto|minutos)$/.test(unidad) ? 60000
+        : /^(h|hr|hora|horas)$/.test(unidad) ? 3600000
+        : /^(d|dia|dias)$/.test(unidad) ? 86400000
+        : /^(w|semana|semanas)$/.test(unidad) ? 604800000
+        : 31536000000;
+    const ms = n * factor;
+    return Number.isFinite(ms) ? ms : null;
+}
+function duracionLegible(ms) {
+    if (!ms) return 'Permanente';
+    const min = Math.round(ms / 60000);
+    if (min % 525600 === 0) return `${min / 525600} año(s)`;
+    if (min % 10080 === 0) return `${min / 10080} semana(s)`;
+    if (min % 1440 === 0) return `${min / 1440} día(s)`;
+    if (min % 60 === 0) return `${min / 60} hora(s)`;
+    return `${min} minuto(s)`;
+}
+function tienePermisoModeracion(member) {
+    return esStaff(member);
+}
+function jerarquiaPermite(actor, objetivo, botMember) {
+    if (!actor || !objetivo || !botMember) return false;
+    if (actor.id === objetivo.id || objetivo.id === client.user.id) return false;
+    if (actor.id === actor.guild.ownerId) return true;
+    if (objetivo.id === actor.guild.ownerId) return false;
+    if (actor.roles.highest.comparePositionTo(objetivo.roles.highest) <= 0) return false;
+    if (botMember.roles.highest.comparePositionTo(objetivo.roles.highest) <= 0) return false;
+    return true;
+}
+async function obtenerMiembro(interactionOrMessage, userId) {
+    const guild = interactionOrMessage.guild;
+    if (!guild) return null;
+    return guild.members.fetch(userId).catch(() => null);
+}
+function embedCaso(caso) {
+    return new EmbedBuilder()
+        .setTitle(`Caso ${caso.id}`)
+        .setColor(caso.estado === 'activo' ? 0xE74C3C : 0x5865F2)
+        .addFields(
+            { name: 'Usuario', value: `${caso.usuarioNombre || 'Desconocido'} (\`${caso.usuarioId}\`)`, inline: false },
+            { name: 'Tipo', value: caso.tipo, inline: true },
+            { name: 'Estado', value: caso.estado, inline: true },
+            { name: 'Motivo', value: String(caso.motivo || 'Sin motivo').slice(0, 1024), inline: false },
+            { name: 'Moderador', value: `${caso.moderadorNombre || 'Desconocido'} (\`${caso.moderadorId}\`)`, inline: false },
+            { name: 'Creado', value: `<t:${Math.floor(new Date(caso.creadoEn).getTime()/1000)}:F>`, inline: true },
+            { name: 'Duración', value: caso.duracionMs ? duracionLegible(caso.duracionMs) : 'No aplica / permanente', inline: true },
+            { name: 'Expira', value: caso.expiraEn ? `<t:${Math.floor(new Date(caso.expiraEn).getTime()/1000)}:F>` : 'No aplica', inline: false },
+            { name: 'Retirada', value: caso.retirada ? `Por <@${caso.retirada.moderadorId}> el <t:${Math.floor(new Date(caso.retirada.fecha).getTime()/1000)}:F>\nMotivo: ${caso.retirada.motivo}` : 'No retirada', inline: false }
+        ).setTimestamp();
+}
+async function enviarLogModeracion(guild, caso, accion) {
+    try {
+        const canal = await guild.channels.fetch(CANAL_LOGS_ID).catch(() => null);
+        if (canal && canal.isTextBased()) {
+            await canal.send({ content: `🛡️ ${accion}`, embeds: [embedCaso(caso)], allowedMentions: { parse: [] } });
+        }
+    } catch (error) { console.error('No se pudo enviar el log de moderación:', error.message); }
+}
+async function aplicarCasoModeracion(guild, actorMember, targetUser, tipo, motivo, duracionMs = null) {
+    if (!validarMotivo(motivo)) throw new Error('El motivo debe tener entre 3 y 1000 caracteres.');
+    const objetivo = await guild.members.fetch(targetUser.id).catch(() => null);
+    const botMember = await guild.members.fetchMe().catch(() => null);
+    if (!objetivo) throw new Error('El usuario no está actualmente en el servidor.');
+    if (!jerarquiaPermite(actorMember, objetivo, botMember)) throw new Error('La jerarquía no permite sancionar a ese usuario. No puedes sancionarte a ti mismo ni sancionar al dueño, a un superior o al bot.');
+    const caso = {
+        id: nuevoIdCaso(), guildId: guild.id, usuarioId: targetUser.id,
+        usuarioNombre: targetUser.tag || targetUser.username, tipo, motivo: motivo.trim(),
+        moderadorId: actorMember.id, moderadorNombre: actorMember.user.tag,
+        creadoEn: new Date().toISOString(), duracionMs,
+        expiraEn: duracionMs ? new Date(Date.now() + duracionMs).toISOString() : null,
+        estado: 'activo', retirada: null, metodo: null
+    };
+    if (tipo === 'ban') {
+        if (!botMember.permissions.has(PermissionFlagsBits.BanMembers)) throw new Error('El bot necesita el permiso Ban Members.');
+        await objetivo.ban({ reason: `[${caso.id}] ${motivo.trim()}` });
+        caso.metodo = 'ban';
+    } else if (tipo === 'sancion' && duracionMs > 28 * 86400000) {
+        if (!botMember.permissions.has(PermissionFlagsBits.BanMembers)) throw new Error('El bot necesita el permiso Ban Members para sanciones superiores a 28 días.');
+        await objetivo.ban({ reason: `[${caso.id}] Sanción temporal: ${motivo.trim()}` });
+        caso.metodo = 'ban_temporal';
+    } else {
+        if (!botMember.permissions.has(PermissionFlagsBits.ModerateMembers)) throw new Error('El bot necesita el permiso Moderate Members.');
+        await objetivo.timeout(duracionMs, `[${caso.id}] ${motivo.trim()}`);
+        caso.metodo = 'timeout';
+    }
+    casosModeracion.push(caso);
+    persistirModeracion();
+    await enviarLogModeracion(guild, caso, `Caso creado: ${tipo}`);
+    return caso;
+}
+async function procesarVencimientosBan() {
+    for (const caso of casosModeracion) {
+        if (caso.estado !== 'activo' || caso.metodo !== 'ban_temporal' || !caso.expiraEn || Date.now() < new Date(caso.expiraEn).getTime()) continue;
+        try {
+            const guild = await client.guilds.fetch(caso.guildId);
+            await guild.bans.remove(caso.usuarioId, `Expiró la sanción temporal ${caso.id}`);
+            caso.estado = 'expirado';
+            caso.expiradoEn = new Date().toISOString();
+            persistirModeracion();
+            await enviarLogModeracion(guild, caso, 'Baneo temporal expirado y retirado');
+        } catch (error) {
+            // Se mantiene activo para reintentar en la siguiente comprobación.
+            console.error(`No se pudo retirar el ban temporal ${caso.id}:`, error.message);
+        }
+    }
+}
+function crearOpcionesUsuarioMotivo() {
+    return [
+        { name: 'usuario', description: 'Usuario objetivo', type: ApplicationCommandOptionType.User, required: true },
+        { name: 'motivo', description: 'Motivo obligatorio', type: ApplicationCommandOptionType.String, required: true, max_length: 1000 }
+    ];
+}
+function definicionesComandosModeracion() {
+    return [
+        { name: 'advertir', description: 'Registrar una advertencia', options: crearOpcionesUsuarioMotivo() },
+        { name: 'sancion', description: 'Aplicar sanción temporal; requiere confirmación', options: [...crearOpcionesUsuarioMotivo(), { name: 'duracion', description: 'Ej.: 30m, 12h, 7d, 1y', type: ApplicationCommandOptionType.String, required: true }] },
+        { name: 'historial', description: 'Consultar advertencias y sanciones de un usuario', options: [{ name: 'usuario', description: 'Usuario a consultar', type: ApplicationCommandOptionType.User, required: true }] },
+        { name: 'kick', description: 'Expulsar a un usuario', options: crearOpcionesUsuarioMotivo() },
+        { name: 'ban', description: 'Banear a un usuario; requiere confirmación', options: crearOpcionesUsuarioMotivo() },
+        { name: 'timeout', description: 'Aplicar timeout de hasta 28 días', options: [...crearOpcionesUsuarioMotivo(), { name: 'duracion', description: 'Ej.: 10m, 3h, 7d, 28d', type: ApplicationCommandOptionType.String, required: true }] },
+        { name: 'quitar_sancion', description: 'Retirar una sanción por ID de caso', options: [{ name: 'caso', description: 'ID del caso', type: ApplicationCommandOptionType.String, required: true }, { name: 'motivo', description: 'Motivo de retirada', type: ApplicationCommandOptionType.String, required: true, max_length: 1000 }] },
+        { name: 'caso', description: 'Consultar un caso', options: [{ name: 'id', description: 'Identificador del caso', type: ApplicationCommandOptionType.String, required: true }] },
+        { name: 'limpiar', description: 'Eliminar mensajes recientes', options: [{ name: 'cantidad', description: 'Cantidad entre 1 y 100', type: ApplicationCommandOptionType.Integer, required: true, min_value: 1, max_value: 100 }] },
+    ];
+}
+async function ejecutarModeracion(nombre, datos, contexto, esSlash) {
+    const { guild, user, member, channel } = contexto;
+    const responder = async (payload) => {
+        if (esSlash) {
+            const resultado = (contexto.deferred || contexto.replied) ? await contexto.followUp(payload) : await contexto.reply(payload);
+            if (payload.components && payload.components.some(row => row.components?.some(c => String(c.customId || '').startsWith('modconfirm:')))) {
+                setTimeout(async () => {
+                    try {
+                        const filas = payload.components.map(row => ActionRowBuilder.from(row).setComponents(
+                            row.components.map(c => ButtonBuilder.from(c).setDisabled(true))
+                        ));
+                        await contexto.editReply({ components: filas, content: '⌛ La confirmación expiró. No se aplicó ninguna acción.' });
+                    } catch (_) {}
+                }, 60000);
+            }
+            return resultado;
+        }
+        const sent = await channel.send(payload);
+        if (payload.components && payload.components.some(row => row.components?.some(c => String(c.customId || '').startsWith('modconfirm:')))) {
+            setTimeout(async () => {
+                try {
+                    const filas = payload.components.map(row => ActionRowBuilder.from(row).setComponents(
+                        row.components.map(c => ButtonBuilder.from(c).setDisabled(true))
+                    ));
+                    await sent.edit({ components: filas, content: '⌛ La confirmación expiró. No se aplicó ninguna acción.' });
+                } catch (_) {}
+            }, 60000);
+        }
+        return sent;
+    };
+    if (!guild) return responder({ content: 'Este comando solo se puede usar dentro de un servidor.', ephemeral: esSlash });
+    if (nombre === 'comandos') {
+        const sub = datos.subcomando;
+        if (sub === 'staff') {
+            if (!esStaff(member)) return responder({ content: '❌ Solo el staff autorizado puede ver esta ayuda.', ephemeral: esSlash });
+            return responder({ embeds: [new EmbedBuilder().setTitle('Comandos del staff').setDescription('**Moderación**\n`/advertir` `.advertir` — advertencia\n`/sancion` `.sancion` — sanción temporal con confirmación\n`/historial` `.historial` — historial\n`/kick` `.kick` — expulsar\n`/ban` `.ban` — ban con confirmación\n`/timeout` `.timeout` — timeout\n`/quitar_sancion` `.quitar_sancion` — retirar caso\n`/caso` `.caso` — consultar caso\n`/limpiar` `.limpiar` — borrar 1–100 mensajes\n\n**Tickets:** `/panel_middleman`, `/panel_soporte`, `/añadir`, `/force_ticket`, `/registro`, `/reseñar`, `/reseñas`, `/repuntuaciones`').setImage(GIF_COMANDOS)], ephemeral: esSlash });
+        }
+        return responder({ embeds: [new EmbedBuilder().setTitle('Comandos generales').setDescription('`/reglas` — consultar reglas\n`/value_brainrot` — consultar precios de Brainrots\n`/spin` — ruleta del perdón\n`/reseñas` — consultar reseñas cuando corresponda\n`/comandos general` — mostrar esta ayuda').setImage(GIF_COMANDOS)], ephemeral: esSlash });
+    }
+    if (!tienePermisoModeracion(member)) return responder({ content: '❌ No tienes permisos para usar comandos de moderación.', ephemeral: esSlash });
+    const motivo = datos.motivo;
+    if (['advertir','sancion','kick','ban','timeout'].includes(nombre) && !validarMotivo(motivo)) return responder({ content: '❌ El motivo es obligatorio y debe tener entre 3 y 1000 caracteres.', ephemeral: esSlash });
+    if (nombre === 'advertir') {
+        const objetivo = datos.usuario;
+        if (objetivo.id === user.id || objetivo.id === client.user.id) return responder({ content: '❌ No puedes advertirte a ti mismo ni al bot.', ephemeral: esSlash });
+        const caso = { id: nuevoIdCaso(), guildId: guild.id, usuarioId: objetivo.id, usuarioNombre: objetivo.tag || objetivo.username, tipo: 'advertencia', motivo: motivo.trim(), moderadorId: user.id, moderadorNombre: user.tag, creadoEn: new Date().toISOString(), duracionMs: null, expiraEn: null, estado: 'registrada', retirada: null };
+        advertenciasModeracion.push(caso); casosModeracion.push(caso); persistirModeracion(); await enviarLogModeracion(guild, caso, 'Advertencia registrada');
+        return responder({ content: `⚠️ Advertencia registrada para <@${objetivo.id}>. Caso: **${caso.id}**`, ephemeral: esSlash });
+    }
+    if (nombre === 'sancion' || nombre === 'timeout') {
+        const ms = parsearDuracion(datos.duracion);
+        if (!ms || ms < 60000 || (nombre === 'timeout' && ms > 28*86400000) || (nombre === 'sancion' && ms > 365*86400000)) return responder({ content: nombre === 'timeout' ? '❌ Duración inválida. Usa de 1 minuto a 28 días (ej.: 30m, 2h, 7d, 28d).' : '❌ Duración inválida. Usa de 1 minuto a 1 año (ej.: 30m, 12h, 7d, 1y).', ephemeral: esSlash });
+        if (nombre === 'timeout') {
+            try {
+                const caso = await aplicarCasoModeracion(guild, member, datos.usuario, 'timeout', motivo, ms);
+                return responder({ content: `✅ Timeout aplicado a <@${datos.usuario.id}>. Caso **${caso.id}**, duración ${duracionLegible(ms)}.`, ephemeral: esSlash });
+            } catch (e) { return responder({ content: `❌ ${e.message}`, ephemeral: esSlash }); }
+        }
+        const token = crypto.randomUUID();
+        const embed = new EmbedBuilder().setTitle('Confirmar sanción').setColor(0xE67E22).setDescription(`**Usuario:** <@${datos.usuario.id}>\n**Motivo:** ${motivo.trim()}\n**Duración:** ${duracionLegible(ms)}\n\nSi supera 28 días, se aplicará un ban temporal que el bot intentará retirar al vencer.\nEsta operación expira en 60 segundos.`);
+        confirmacionesModeracion.set(token, { actorId: user.id, guildId: guild.id, usuarioId: datos.usuario.id, tipo: 'sancion', motivo: motivo.trim(), duracionMs: ms, expira: Date.now()+60000, usado: false });
+        const fila = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`modconfirm:${token}`).setLabel('Confirmar').setStyle(BTN_STYLE.DANGER),
+            new ButtonBuilder().setCustomId(`modcancel:${token}`).setLabel('Cancelar').setStyle(BTN_STYLE.SECONDARY)
+        );
+        return responder({ embeds: [embed], components: [fila], ephemeral: esSlash });
+    }
+    if (nombre === 'ban') {
+        const token = crypto.randomUUID();
+        confirmacionesModeracion.set(token, { actorId: user.id, guildId: guild.id, usuarioId: datos.usuario.id, tipo: 'ban', motivo: motivo.trim(), duracionMs: null, expira: Date.now()+60000, usado: false });
+        const fila = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`modconfirm:${token}`).setLabel('Confirmar').setStyle(BTN_STYLE.DANGER),
+            new ButtonBuilder().setCustomId(`modcancel:${token}`).setLabel('Cancelar').setStyle(BTN_STYLE.SECONDARY)
+        );
+        return responder({ embeds: [new EmbedBuilder().setTitle('Confirmar ban').setColor(0xE74C3C).setDescription(`**Usuario:** <@${datos.usuario.id}>\n**Motivo:** ${motivo.trim()}\n**Duración:** Permanente\n\nEsta operación expira en 60 segundos.`)], components: [fila], ephemeral: esSlash });
+    }
+    if (nombre === 'kick') {
+        try {
+            const objetivo = await guild.members.fetch(datos.usuario.id).catch(() => null);
+            const botMember = await guild.members.fetchMe();
+            if (!objetivo) throw new Error('El usuario no está actualmente en el servidor.');
+            if (!jerarquiaPermite(member, objetivo, botMember)) throw new Error('La jerarquía no permite expulsar a ese usuario.');
+            if (!botMember.permissions.has(PermissionFlagsBits.KickMembers)) throw new Error('El bot necesita el permiso Kick Members.');
+            await objetivo.kick(motivo.trim());
+            const caso = { id: nuevoIdCaso(), guildId:guild.id, usuarioId:datos.usuario.id, usuarioNombre:datos.usuario.tag || datos.usuario.username, tipo:'kick', motivo:motivo.trim(), moderadorId:user.id, moderadorNombre:user.tag, creadoEn:new Date().toISOString(), duracionMs:null, expiraEn:null, estado:'ejecutada', retirada:null };
+            casosModeracion.push(caso); persistirModeracion(); await enviarLogModeracion(guild, caso, 'Usuario expulsado');
+            return responder({ content: `👢 Usuario expulsado. Caso **${caso.id}**.`, ephemeral: esSlash });
+        } catch(e) { return responder({ content: `❌ ${e.message}`, ephemeral: esSlash }); }
+    }
+    if (nombre === 'historial') {
+        const objetivo = datos.usuario;
+        const encontrados = casosModeracion.filter(c => c.guildId === guild.id && c.usuarioId === objetivo.id);
+        if (!encontrados.length) return responder({ content: `No hay advertencias ni sanciones registradas para <@${objetivo.id}>.`, ephemeral: esSlash });
+        const desc = encontrados.slice(-15).reverse().map(c => `**${c.id}** · ${c.tipo} · ${c.estado}\nMotivo: ${c.motivo}\nModerador: <@${c.moderadorId}> · <t:${Math.floor(new Date(c.creadoEn).getTime()/1000)}:f>\nDuración: ${c.duracionMs ? duracionLegible(c.duracionMs) : 'No aplica'}${c.expiraEn ? ` · Expira <t:${Math.floor(new Date(c.expiraEn).getTime()/1000)}:R>` : ''}`).join('\n\n');
+        return responder({ embeds: [new EmbedBuilder().setTitle(`Historial de ${objetivo.tag || objetivo.username}`).setDescription(desc.slice(0,4000))], ephemeral: esSlash });
+    }
+    if (nombre === 'caso') {
+        const caso = casosModeracion.find(c => c.guildId === guild.id && c.id.toLowerCase() === String(datos.id).toLowerCase());
+        return responder(caso ? { embeds: [embedCaso(caso)], ephemeral: esSlash } : { content: 'No se encontró ese ID de caso en este servidor.', ephemeral: esSlash });
+    }
+    if (nombre === 'quitar_sancion') {
+        const caso = casosModeracion.find(c => c.guildId === guild.id && c.id.toLowerCase() === String(datos.id).toLowerCase());
+        if (!caso) return responder({ content: '❌ No se encontró ese caso.', ephemeral: esSlash });
+        if (!['activo','registrada'].includes(caso.estado)) return responder({ content: `Ese caso ya está en estado "${caso.estado}".`, ephemeral: esSlash });
+        try {
+            if (caso.metodo === 'timeout') {
+                const target = await guild.members.fetch(caso.usuarioId).catch(() => null);
+                if (target) await target.timeout(null, `Retirada ${caso.id}: ${datos.motivo}`);
+            } else if (caso.metodo === 'ban' || caso.metodo === 'ban_temporal') {
+                await guild.bans.remove(caso.usuarioId, `Retirada ${caso.id}: ${datos.motivo}`);
+            }
+            caso.estado = 'retirada'; caso.retirada = { moderadorId:user.id, moderadorNombre:user.tag, fecha:new Date().toISOString(), motivo:datos.motivo.trim() };
+            persistirModeracion(); await enviarLogModeracion(guild, caso, 'Sanción retirada');
+            return responder({ content: `✅ Caso **${caso.id}** marcado como retirado. Se conserva el historial.`, ephemeral: esSlash });
+        } catch(e) { return responder({ content: `❌ No se pudo retirar la sanción: ${e.message}`, ephemeral: esSlash }); }
+    }
+    if (nombre === 'limpiar') {
+        const cantidad = Number(datos.cantidad);
+        if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 100) return responder({ content: 'La cantidad debe estar entre 1 y 100.', ephemeral: esSlash });
+        if (!channel || !channel.isTextBased() || !channel.messages) return responder({ content: 'Este canal no permite limpiar mensajes.', ephemeral: esSlash });
+        const botMember = await guild.members.fetchMe();
+        if (!botMember.permissionsIn(channel).has(PermissionFlagsBits.ManageMessages)) return responder({ content: 'El bot necesita Manage Messages en este canal.', ephemeral: esSlash });
+        if (!member.permissions.has(PermissionFlagsBits.ManageMessages) && !esStaff(member)) return responder({ content: 'Necesitas permiso para gestionar mensajes.', ephemeral: esSlash });
+        try {
+            const fetched = await channel.messages.fetch({ limit: cantidad });
+            const eliminables = fetched.filter(m => Date.now() - m.createdTimestamp < 14*24*60*60*1000);
+            const antiguas = fetched.size - eliminables.size;
+            const borradas = eliminables.size ? await channel.bulkDelete(eliminables, true) : new Map();
+            return responder({ content: `🧹 Eliminados ${borradas.size} de ${cantidad} mensajes recientes.${antiguas ? ` ${antiguas} mensaje(s) tenían más de 14 días y no se pueden borrar en lote.` : ''}`, ephemeral: esSlash });
+        } catch(e) { return responder({ content: `❌ No se pudieron eliminar todos los mensajes: ${e.message}`, ephemeral: esSlash }); }
+    }
+}
+
 // ============================================================
 // READY
 // ============================================================
@@ -1096,7 +1454,11 @@ client.once('ready', async function() {
             },
             {
                 name: 'comandos',
-                description: 'Muestra los comandos disponibles.'
+                description: 'Muestra los comandos disponibles.',
+                options: [
+                    { type: ApplicationCommandOptionType.Subcommand, name: 'general', description: 'Comandos para miembros' },
+                    { type: ApplicationCommandOptionType.Subcommand, name: 'staff', description: 'Comandos exclusivos del staff' }
+                ]
             },
             {
                 name: 'value_brainrot',
@@ -1118,11 +1480,14 @@ client.once('ready', async function() {
                     { name: 'relato', description: 'Relata la experiencia y qué pasó', type: ApplicationCommandOptionType.String, required: true },
                     { name: 'motivo', description: 'Motivo del registro', type: ApplicationCommandOptionType.String, required: true }
                 ]
-            }
+            },
+            ...definicionesComandosModeracion()
 
         ]);
 
         console.log('🤖 Comandos Slash registrados correctamente.');
+        setInterval(() => procesarVencimientosBan().catch(err => console.error('Error revisando baneos temporales:', err)), 60 * 1000);
+        procesarVencimientosBan().catch(err => console.error('Error inicial revisando baneos temporales:', err));
 
     } catch (err) {
 
@@ -1149,6 +1514,27 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const member = interaction.member;
         const guild = interaction.guild;
+
+        const nombresModeracion = ['advertir','sancion','historial','kick','ban','timeout','quitar_sancion','caso','limpiar','comandos'];
+        if (nombresModeracion.includes(commandName)) {
+            const actorMember = guild ? await guild.members.fetch(user.id).catch(() => null) : null;
+            const datos = {};
+            if (['advertir','sancion','kick','ban','timeout'].includes(commandName)) {
+                datos.usuario = options.getUser('usuario', true);
+                datos.motivo = options.getString('motivo', true);
+                if (['sancion','timeout'].includes(commandName)) datos.duracion = options.getString('duracion', true);
+            } else if (commandName === 'historial') datos.usuario = options.getUser('usuario', true);
+            else if (commandName === 'caso') datos.id = options.getString('id', true);
+            else if (commandName === 'quitar_sancion') {
+                datos.id = options.getString('caso', true);
+                datos.motivo = options.getString('motivo', true);
+            } else if (commandName === 'limpiar') datos.cantidad = options.getInteger('cantidad', true);
+            else if (commandName === 'comandos') datos.subcomando = options.getSubcommand(true);
+            return ejecutarModeracion(commandName, datos, {
+                guild, user, member: actorMember, channel, deferred: interaction.deferred, replied: interaction.replied,
+                reply: interaction.reply.bind(interaction), followUp: interaction.followUp.bind(interaction), editReply: interaction.editReply.bind(interaction)
+            }, true);
+        }
 
         // ====================================================
         // COMANDOS BRAINROT Y REGLAS
@@ -2005,9 +2391,12 @@ client.on('interactionCreate', async function(interaction) {
         const customId = interaction.customId;
 
         if (customId === 'reglas_menu_publico' || customId === 'reglas_privado') {
-            const embed = interaction.values[0] === 'general'
+            const categoria = interaction.values[0];
+            const embed = categoria === 'general'
                 ? crearReglasGeneralesEmbed()
-                : crearReglasMiddlemanEmbed();
+                : categoria === 'middleman'
+                    ? crearReglasMiddlemanEmbed()
+                    : crearReglasSancionesEmbed();
             const components = [new ActionRowBuilder().addComponents(crearMenuReglasPrivado())];
             if (customId === 'reglas_menu_publico') {
                 return interaction.reply({embeds: [embed], components, ephemeral: true});
@@ -2055,6 +2444,32 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const channel = interaction.channel;
         const member = interaction.member;
+
+        if (customId.startsWith('modconfirm:') || customId.startsWith('modcancel:')) {
+            const token = customId.split(':')[1];
+            const pending = confirmacionesModeracion.get(token);
+            if (!pending) return interaction.reply({ content: 'Esta confirmación ya no existe o expiró.', ephemeral: true });
+            if (interaction.user.id !== pending.actorId) return interaction.reply({ content: '❌ Solo el moderador que inició esta operación puede confirmarla o cancelarla.', ephemeral: true });
+            if (pending.usado || Date.now() > pending.expira) {
+                confirmacionesModeracion.delete(token);
+                return interaction.update({ content: '⌛ La confirmación expiró. No se aplicó ninguna acción.', components: [] });
+            }
+            if (customId.startsWith('modcancel:')) {
+                pending.usado = true; confirmacionesModeracion.delete(token);
+                return interaction.update({ content: 'Operación cancelada. No se aplicó ninguna sanción.', components: [] });
+            }
+            pending.usado = true;
+            confirmacionesModeracion.delete(token);
+            await interaction.update({ content: '⏳ Ejecutando la acción confirmada…', components: [] });
+            try {
+                const actor = await guild.members.fetch(pending.actorId);
+                const targetUser = await client.users.fetch(pending.usuarioId);
+                const caso = await aplicarCasoModeracion(guild, actor, targetUser, pending.tipo, pending.motivo, pending.duracionMs);
+                return interaction.followUp({ content: `✅ Acción aplicada a <@${pending.usuarioId}>. Caso **${caso.id}**.`, ephemeral: true });
+            } catch (error) {
+                return interaction.followUp({ content: `❌ No se pudo aplicar la acción: ${error.message}`, ephemeral: true });
+            }
+        }
 
         // ====================================================
         // CREAR TICKET MIDDLEMAN
@@ -3015,6 +3430,57 @@ client.on('interactionCreate', async function(interaction) {
                 5000
             );
         }
+    }
+});
+
+
+// ============================================================
+// COMANDOS DE MODERACIÓN CON PREFIJO "."
+// ============================================================
+client.on('messageCreate', async (message) => {
+    if (!message.guild || message.author.bot || !message.content.startsWith('.')) return;
+    const partes = message.content.trim().slice(1).split(/\s+/);
+    const nombre = (partes.shift() || '').toLowerCase();
+    const aliases = {
+        advertir: 'advertir', sancion: 'sancion', historial: 'historial',
+        kick: 'kick', ban: 'ban', timeout: 'timeout',
+        quitar_sancion: 'quitar_sancion', caso: 'caso', limpiar: 'limpiar',
+        comandos: 'comandos'
+    };
+    if (!aliases[nombre]) return;
+    const member = message.member;
+    const datos = {};
+    const obtenerUsuario = async (arg) => {
+        const id = String(arg || '').replace(/[<@!>]/g, '');
+        if (!/^\d{15,22}$/.test(id)) return null;
+        return message.client.users.fetch(id).catch(() => null);
+    };
+    if (['advertir','sancion','kick','ban','timeout'].includes(nombre)) {
+        const usuario = await obtenerUsuario(partes.shift());
+        if (!usuario) return message.reply('Uso: `.' + nombre + ' @usuario motivo`' + (['sancion','timeout'].includes(nombre) ? ' (duración primero: `.'+nombre+' @usuario 7d motivo`)' : ''));
+        datos.usuario = usuario;
+        if (['sancion','timeout'].includes(nombre)) datos.duracion = partes.shift();
+        datos.motivo = partes.join(' ').trim();
+    } else if (nombre === 'historial') {
+        datos.usuario = await obtenerUsuario(partes.shift());
+        if (!datos.usuario) return message.reply('Uso: `.historial @usuario`');
+    } else if (nombre === 'caso') {
+        datos.id = partes.shift();
+        if (!datos.id) return message.reply('Uso: `.caso ID-DEL-CASO`');
+    } else if (nombre === 'quitar_sancion') {
+        datos.id = partes.shift();
+        datos.motivo = partes.join(' ').trim();
+        if (!datos.id || !datos.motivo) return message.reply('Uso: `.quitar_sancion ID-DEL-CASO motivo`');
+    } else if (nombre === 'limpiar') {
+        datos.cantidad = Number(partes.shift());
+    } else if (nombre === 'comandos') {
+        datos.subcomando = (partes.shift() || 'general').toLowerCase();
+    }
+    try {
+        await ejecutarModeracion(nombre, datos, { guild: message.guild, user: message.author, member, channel: message.channel, deferred: false, replied: false }, false);
+    } catch (error) {
+        console.error(`Error en .${nombre}:`, error);
+        await message.reply('❌ Ocurrió un error procesando el comando.').catch(() => {});
     }
 });
 
