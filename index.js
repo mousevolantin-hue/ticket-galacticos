@@ -1418,13 +1418,13 @@ function esAdminPostulaciones(member) {
 function crearPanelPostulaciones() {
     return {
         embeds: [new EmbedBuilder()
-            .setColor(0x8E44AD)
+            .setColor(0xF39C12)
             .setTitle('🎃 Postulaciones | The Galactics')
             .setDescription('¿Quieres crecer dentro del equipo? Inicia tu postulación desde el botón de abajo.\\n\\nEl sistema solo mostrará los rangos disponibles según tu rango actual y el stock habilitado por la administración.')
             .setImage(GIF_NUEVO)
             .setFooter({ text: 'The Galactics • Sistema oficial de postulaciones' })],
         components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('postulacion:iniciar').setLabel('Iniciar postulación').setEmoji('📝').setStyle(1)
+            new ButtonBuilder().setCustomId('postulacion:iniciar').setLabel('Iniciar postulación').setEmoji('📝').setStyle(4)
         )]
     };
 }
@@ -1598,8 +1598,17 @@ client.once('ready', async function() {
             },
             {
                 name: 'añadir_rangos',
-                description: 'Configurar los rangos disponibles para postularse',
-                options: [{ name: 'rangos', description: 'Rangos a habilitar, separados por coma: middleman, moderador, administrador, co-owner', type: ApplicationCommandOptionType.String, required: true }]
+                description: 'Añadir un rango al stock de postulaciones',
+                options: [{ name: 'rango', description: 'Rango que deseas habilitar', type: ApplicationCommandOptionType.String, required: true, choices: [
+                    { name: 'Middleman', value: 'middleman' }, { name: 'Moderador', value: 'moderador' }, { name: 'Administrador', value: 'administrador' }, { name: 'Co-owner', value: 'co-owner' }
+                ]}]
+            },
+            {
+                name: 'eliminar_rangos',
+                description: 'Eliminar un rango del stock de postulaciones',
+                options: [{ name: 'rango', description: 'Rango añadido que deseas deshabilitar', type: ApplicationCommandOptionType.String, required: true, choices: [
+                    { name: 'Middleman', value: 'middleman' }, { name: 'Moderador', value: 'moderador' }, { name: 'Administrador', value: 'administrador' }, { name: 'Co-owner', value: 'co-owner' }
+                ]}]
             },
             {
                 name: 'postulaciones_activas',
@@ -1653,7 +1662,7 @@ client.on('interactionCreate', async function(interaction) {
         const member = interaction.member;
         const guild = interaction.guild;
 
-        if (['panel_postulaciones', 'añadir_rangos', 'postulaciones_activas', 'mandar_postulacion'].includes(commandName)) {
+        if (['panel_postulaciones', 'añadir_rangos', 'eliminar_rangos', 'postulaciones_activas', 'mandar_postulacion'].includes(commandName)) {
             if (!guild) return interaction.reply({ content: 'Este comando solo se puede usar en un servidor.', ephemeral: true });
             const actor = await guild.members.fetch(user.id).catch(() => null);
             if (commandName === 'panel_postulaciones') {
@@ -1661,16 +1670,21 @@ client.on('interactionCreate', async function(interaction) {
                 await channel.send(crearPanelPostulaciones());
                 return interaction.reply({ content: '✅ Panel de postulaciones publicado.', ephemeral: true });
             }
-            if (commandName === 'añadir_rangos') {
+            if (commandName === 'añadir_rangos' || commandName === 'eliminar_rangos') {
                 if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administrador, co-owner o dueño puede configurar los rangos.', ephemeral: true });
-                const raw = options.getString('rangos', true).toLowerCase();
-                const aliases = { 'middleman': 'middleman', 'mm': 'middleman', 'moderador': 'moderador', 'mod': 'moderador', 'administrador': 'administrador', 'admin': 'administrador', 'co-owner': 'co-owner', 'coowner': 'co-owner' };
-                const parsed = raw.split(/[,;\s]+/).map(x => aliases[x]).filter(Boolean);
-                if (!parsed.length) return interaction.reply({ content: '❌ Indica al menos un rango válido: middleman, moderador, administrador, co-owner.', ephemeral: true });
-                rangosPostulacion = [...new Set(parsed)].sort((a,b) => ORDEN_POSTULACION.indexOf(a)-ORDEN_POSTULACION.indexOf(b));
+                const rango = options.getString('rango', true);
+                if (commandName === 'añadir_rangos') {
+                    if (rangosPostulacion.includes(rango)) return interaction.reply({ content: `⚠️ **${ROLES_POSTULACION[rango].nombre}** ya está habilitado.`, ephemeral: true });
+                    rangosPostulacion = [...rangosPostulacion, rango].sort((a,b) => ORDEN_POSTULACION.indexOf(a)-ORDEN_POSTULACION.indexOf(b));
+                    guardarPostulaciones();
+                    await logPostulacion(guild, `<@${user.id}> añadió **${ROLES_POSTULACION[rango].nombre}** al stock de postulaciones.`);
+                    return interaction.reply({ content: `✅ **${ROLES_POSTULACION[rango].nombre}** fue añadido al stock de postulaciones.`, ephemeral: true });
+                }
+                if (!rangosPostulacion.includes(rango)) return interaction.reply({ content: `⚠️ **${ROLES_POSTULACION[rango].nombre}** no está habilitado actualmente.`, ephemeral: true });
+                rangosPostulacion = rangosPostulacion.filter(r => r !== rango);
                 guardarPostulaciones();
-                await logPostulacion(guild, `Stock de rangos actualizado por <@${user.id}>: ${rangosPostulacion.map(r => ROLES_POSTULACION[r].nombre).join(', ') || 'ninguno'}.`);
-                return interaction.reply({ content: `✅ Stock de postulaciones actualizado: ${rangosPostulacion.map(r => ROLES_POSTULACION[r].nombre).join(', ')}.`, ephemeral: true });
+                await logPostulacion(guild, `<@${user.id}> eliminó **${ROLES_POSTULACION[rango].nombre}** del stock de postulaciones.`);
+                return interaction.reply({ content: `✅ **${ROLES_POSTULACION[rango].nombre}** fue eliminado del stock de postulaciones.`, ephemeral: true });
             }
             if (commandName === 'postulaciones_activas') {
                 if (channel.id !== CANAL_POSTULACIONES_ACTIVAS) return interaction.reply({ content: `❌ Usa este comando en <#${CANAL_POSTULACIONES_ACTIVAS}>.`, ephemeral: true });
@@ -1694,7 +1708,7 @@ client.on('interactionCreate', async function(interaction) {
         if (commandName === 'cmds') {
             const sub = options.getSubcommand(true);
             if (sub !== 'postulaciones') return interaction.reply({ content: 'Usa `/cmds postulaciones`.', ephemeral: true });
-            return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Comandos de postulaciones').setColor(0x8E44AD).setDescription('`/panel_postulaciones` — publica el panel con el GIF de Halloween.\n`/añadir_rangos rangos` — define el stock de rangos disponibles.\n`/postulaciones_activas rango` — consulta las postulaciones activas y sus respuestas; úsalo en el canal designado.\n`/mandar_postulacion rango` — exporta postulantes y respuestas a **TXT RESULTADOS.txt**.\n\nLos rangos habilitados se limitan por jerarquía: miembro → Middleman → Moderador → Administrador → Co-owner.')], ephemeral: true });
+            return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Comandos de postulaciones').setColor(0xF39C12).setDescription('`/panel_postulaciones` — publica el panel con el GIF de Halloween.\n`/añadir_rangos rango` — añade un rango al stock mediante opciones.\n`/eliminar_rangos rango` — elimina un rango del stock mediante opciones.\n`/postulaciones_activas rango` — consulta las postulaciones activas y sus respuestas; úsalo en el canal designado.\n`/mandar_postulacion rango` — exporta postulantes y respuestas a **TXT RESULTADOS.txt**.\n\nLos rangos habilitados se limitan por jerarquía: miembro → Middleman → Moderador → Administrador → Co-owner.')], ephemeral: true });
         }
 
         const nombresModeracion = ['advertir','sancion','historial','kick','ban','timeout','quitar_sancion','caso','limpiar','comandos'];
