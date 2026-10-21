@@ -11,7 +11,10 @@ const {
     StringSelectMenuOptionBuilder,
     AttachmentBuilder,
     PermissionFlagsBits,
-    ApplicationCommandOptionType
+    ApplicationCommandOptionType,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require('discord.js');
 
 const express = require('express');
@@ -1358,6 +1361,114 @@ async function ejecutarModeracion(nombre, datos, contexto, esSlash) {
     }
 }
 
+
+// ============================================================
+// SISTEMA DE POSTULACIONES
+// ============================================================
+const CANAL_POSTULACIONES_ACTIVAS = '1562599831204008007';
+const ARCHIVO_POSTULACIONES = path.join(__dirname, 'postulaciones.json');
+const ROLES_POSTULACION = {
+    middleman: { id: '1499596482322501802', nombre: 'Middleman', color: 0x3498DB, estilo: 1 },
+    moderador: { id: '1499595987411406998', nombre: 'Moderador', color: 0x2ECC71, estilo: 3 },
+    administrador: { id: '1499606642898112612', nombre: 'Administrador', color: 0x9B59B6, estilo: 1 },
+    'co-owner': { id: '1499597074642243686', nombre: 'Co-owner', color: 0xE74C3C, estilo: 4 }
+};
+const ORDEN_POSTULACION = ['middleman', 'moderador', 'administrador', 'co-owner'];
+let rangosPostulacion = [];
+let postulaciones = [];
+const postulacionesPendientes = new Map();
+
+function cargarPostulaciones() {
+    try {
+        if (!fs.existsSync(ARCHIVO_POSTULACIONES)) {
+            fs.writeFileSync(ARCHIVO_POSTULACIONES, JSON.stringify({ rangos: [], postulaciones: [] }, null, 2));
+        }
+        const data = JSON.parse(fs.readFileSync(ARCHIVO_POSTULACIONES, 'utf8') || '{}');
+        rangosPostulacion = Array.isArray(data.rangos) ? data.rangos : [];
+        postulaciones = Array.isArray(data.postulaciones) ? data.postulaciones : [];
+    } catch (e) { console.error('Error cargando postulaciones:', e.message); }
+}
+function guardarPostulaciones() {
+    fs.writeFileSync(ARCHIVO_POSTULACIONES, JSON.stringify({ rangos: rangosPostulacion, postulaciones }, null, 2), 'utf8');
+}
+cargarPostulaciones();
+
+function rangoMasAltoPostulacion(member) {
+    if (!member) return -1;
+    // El dueño del servidor equivale al nivel más alto.
+    if (member.id === member.guild.ownerId) return 4;
+    for (let i = ORDEN_POSTULACION.length - 1; i >= 0; i--) {
+        if (member.roles.cache.has(ROLES_POSTULACION[ORDEN_POSTULACION[i]].id)) return i;
+    }
+    return -1;
+}
+function rangosPermitidosPara(member) {
+    const nivel = rangoMasAltoPostulacion(member);
+    // Los miembros base (incluido el rango Watones si no tiene un ID configurado aquí)
+    // solo pueden solicitar Middleman; cada rango staff avanza exactamente un nivel.
+    const objetivo = nivel < 0 ? 0 : nivel + 1;
+    return rangosPostulacion.filter(r => ORDEN_POSTULACION.indexOf(r) === objetivo);
+}
+function esAdminPostulaciones(member) {
+    return !!member && (member.id === member.guild.ownerId ||
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.roles.cache.has(ROLES_POSTULACION['co-owner'].id) ||
+        member.roles.cache.has(ROLES_POSTULACION.administrador.id));
+}
+function crearPanelPostulaciones() {
+    return {
+        embeds: [new EmbedBuilder()
+            .setColor(0x8E44AD)
+            .setTitle('🎃 Postulaciones | The Galactics')
+            .setDescription('¿Quieres crecer dentro del equipo? Inicia tu postulación desde el botón de abajo.\\n\\nEl sistema solo mostrará los rangos disponibles según tu rango actual y el stock habilitado por la administración.')
+            .setImage(GIF_NUEVO)
+            .setFooter({ text: 'The Galactics • Sistema oficial de postulaciones' })],
+        components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('postulacion:iniciar').setLabel('Iniciar postulación').setEmoji('📝').setStyle(1)
+        )]
+    };
+}
+function crearBotonesRangos(member) {
+    const permitidos = rangosPermitidosPara(member);
+    const fila = new ActionRowBuilder();
+    for (const rango of rangosPostulacion) {
+        const info = ROLES_POSTULACION[rango];
+        const permitido = permitidos.includes(rango);
+        fila.addComponents(new ButtonBuilder()
+            .setCustomId(`postulacion:rango:${rango}`)
+            .setLabel(info.nombre)
+            .setStyle(info.estilo)
+            .setDisabled(!permitido));
+    }
+    return fila;
+}
+async function logPostulacion(guild, texto, postulacion = null) {
+    try {
+        const canal = await guild.channels.fetch(CANAL_LOGS_ID).catch(() => null);
+        if (!canal || !canal.isTextBased()) return;
+        const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('📋 Registro de postulaciones')
+            .setDescription(texto).setTimestamp();
+        if (postulacion) embed.addFields(
+            { name: 'Postulante', value: `<@${postulacion.usuarioId}>`, inline: true },
+            { name: 'Rango solicitado', value: ROLES_POSTULACION[postulacion.rango]?.nombre || postulacion.rango, inline: true },
+            { name: 'Respuesta', value: String(postulacion.respuesta || 'Pendiente').slice(0, 1024), inline: false }
+        );
+        await canal.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    } catch (e) { console.error('Error enviando log de postulación:', e.message); }
+}
+function textoPostulacion(p) {
+    return `Postulante: <@${p.usuarioId}> (${p.usuarioNombre})\\nRango solicitado: ${ROLES_POSTULACION[p.rango]?.nombre || p.rango}\\nFecha: ${p.fecha}\\nEstado: ${p.estado}\\n¿Por qué te quieres postular?:\\n${p.respuesta || '(sin respuesta)'}\\n${'-'.repeat(50)}\\n`;
+}
+async function enviarPostulacionesTXT(interaction, rango) {
+    const lista = postulaciones.filter(p => p.guildId === interaction.guildId && p.rango === rango);
+    const postulantes = lista.length ? lista.map(p => `${p.usuarioNombre} (<@${p.usuarioId}>)\\n¿Por qué se quiere postular?: ${p.respuesta}\\nFecha: ${p.fecha}\\n`).join('\\n') : '';
+    const contenido = `POSTULANTES:\\n\\n${postulantes}\\n\\n${'_'.repeat(90)}\\n\\n` +
+        `${ROLES_POSTULACION[rango].nombre.toUpperCase()} (elegidos)\\n\\n\\n${'_'.repeat(90)}\\n\\n` +
+        `NO ELEGIDOS (${rango})\\n\\n\\n${'_'.repeat(90)}\\n`;
+    const adjunto = new AttachmentBuilder(Buffer.from(contenido, 'utf8'), { name: 'TXT RESULTADOS.txt' });
+    return interaction.reply({ content: `📄 Resultados de postulaciones para **${ROLES_POSTULACION[rango].nombre}** (${lista.length}).`, files: [adjunto], ephemeral: true });
+}
+
 // ============================================================
 // READY
 // ============================================================
@@ -1481,6 +1592,33 @@ client.once('ready', async function() {
                     { name: 'motivo', description: 'Motivo del registro', type: ApplicationCommandOptionType.String, required: true }
                 ]
             },
+            {
+                name: 'panel_postulaciones',
+                description: 'Publicar el panel de postulaciones'
+            },
+            {
+                name: 'añadir_rangos',
+                description: 'Configurar los rangos disponibles para postularse',
+                options: [{ name: 'rangos', description: 'Rangos a habilitar, separados por coma: middleman, moderador, administrador, co-owner', type: ApplicationCommandOptionType.String, required: true }]
+            },
+            {
+                name: 'postulaciones_activas',
+                description: 'Consultar las postulaciones activas de un rango',
+                options: [{ name: 'rango', description: 'Rango de la postulación', type: ApplicationCommandOptionType.String, required: true, choices: [
+                    { name: 'Middleman', value: 'middleman' }, { name: 'Moderador', value: 'moderador' }, { name: 'Administrador', value: 'administrador' }, { name: 'Co-owner', value: 'co-owner' }
+                ]}]
+            },
+            {
+                name: 'mandar_postulacion',
+                description: 'Exportar postulantes y respuestas en TXT',
+                options: [{ name: 'rango', description: 'Rango que se exportará', type: ApplicationCommandOptionType.String, required: true, choices: [
+                    { name: 'Middleman', value: 'middleman' }, { name: 'Moderador', value: 'moderador' }, { name: 'Administrador', value: 'administrador' }, { name: 'Co-owner', value: 'co-owner' }
+                ]}]
+            },
+            {
+                name: 'cmds', description: 'Ayuda de comandos por categoría',
+                options: [{ type: ApplicationCommandOptionType.Subcommand, name: 'postulaciones', description: 'Comandos y funciones del sistema de postulaciones' }]
+            },
             ...definicionesComandosModeracion()
 
         ]);
@@ -1514,6 +1652,50 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const member = interaction.member;
         const guild = interaction.guild;
+
+        if (['panel_postulaciones', 'añadir_rangos', 'postulaciones_activas', 'mandar_postulacion'].includes(commandName)) {
+            if (!guild) return interaction.reply({ content: 'Este comando solo se puede usar en un servidor.', ephemeral: true });
+            const actor = await guild.members.fetch(user.id).catch(() => null);
+            if (commandName === 'panel_postulaciones') {
+                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administración puede publicar el panel.', ephemeral: true });
+                await channel.send(crearPanelPostulaciones());
+                return interaction.reply({ content: '✅ Panel de postulaciones publicado.', ephemeral: true });
+            }
+            if (commandName === 'añadir_rangos') {
+                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administrador, co-owner o dueño puede configurar los rangos.', ephemeral: true });
+                const raw = options.getString('rangos', true).toLowerCase();
+                const aliases = { 'middleman': 'middleman', 'mm': 'middleman', 'moderador': 'moderador', 'mod': 'moderador', 'administrador': 'administrador', 'admin': 'administrador', 'co-owner': 'co-owner', 'coowner': 'co-owner' };
+                const parsed = raw.split(/[,;\s]+/).map(x => aliases[x]).filter(Boolean);
+                if (!parsed.length) return interaction.reply({ content: '❌ Indica al menos un rango válido: middleman, moderador, administrador, co-owner.', ephemeral: true });
+                rangosPostulacion = [...new Set(parsed)].sort((a,b) => ORDEN_POSTULACION.indexOf(a)-ORDEN_POSTULACION.indexOf(b));
+                guardarPostulaciones();
+                await logPostulacion(guild, `Stock de rangos actualizado por <@${user.id}>: ${rangosPostulacion.map(r => ROLES_POSTULACION[r].nombre).join(', ') || 'ninguno'}.`);
+                return interaction.reply({ content: `✅ Stock de postulaciones actualizado: ${rangosPostulacion.map(r => ROLES_POSTULACION[r].nombre).join(', ')}.`, ephemeral: true });
+            }
+            if (commandName === 'postulaciones_activas') {
+                if (channel.id !== CANAL_POSTULACIONES_ACTIVAS) return interaction.reply({ content: `❌ Usa este comando en <#${CANAL_POSTULACIONES_ACTIVAS}>.`, ephemeral: true });
+                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administración puede consultar postulaciones activas.', ephemeral: true });
+                const rango = options.getString('rango', true);
+                const lista = postulaciones.filter(p => p.guildId === guild.id && p.rango === rango && p.estado === 'activa');
+                if (!lista.length) return interaction.reply({ content: `No hay postulaciones activas para ${ROLES_POSTULACION[rango].nombre}.`, ephemeral: true });
+                const embeds = [];
+                for (const p of lista) embeds.push(new EmbedBuilder().setColor(ROLES_POSTULACION[rango].color).setTitle(`Postulación ${ROLES_POSTULACION[rango].nombre}`).addFields(
+                    { name: 'Postulante', value: `<@${p.usuarioId}> (${p.usuarioNombre})`, inline: false },
+                    { name: 'Fecha', value: p.fecha, inline: true },
+                    { name: '¿Por qué te quieres postular?', value: String(p.respuesta || 'Sin respuesta').slice(0, 1024), inline: false }
+                ).setFooter({ text: `ID: ${p.id}` }));
+                return interaction.reply({ content: `Postulaciones activas: **${lista.length}**`, embeds: embeds.slice(0, 10), ephemeral: true });
+            }
+            if (commandName === 'mandar_postulacion') {
+                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administrador, co-owner o dueño puede exportar postulaciones.', ephemeral: true });
+                return enviarPostulacionesTXT(interaction, options.getString('rango', true));
+            }
+        }
+        if (commandName === 'cmds') {
+            const sub = options.getSubcommand(true);
+            if (sub !== 'postulaciones') return interaction.reply({ content: 'Usa `/cmds postulaciones`.', ephemeral: true });
+            return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Comandos de postulaciones').setColor(0x8E44AD).setDescription('`/panel_postulaciones` — publica el panel con el GIF de Halloween.\n`/añadir_rangos rangos` — define el stock de rangos disponibles.\n`/postulaciones_activas rango` — consulta las postulaciones activas y sus respuestas; úsalo en el canal designado.\n`/mandar_postulacion rango` — exporta postulantes y respuestas a **TXT RESULTADOS.txt**.\n\nLos rangos habilitados se limitan por jerarquía: miembro → Middleman → Moderador → Administrador → Co-owner.')], ephemeral: true });
+        }
 
         const nombresModeracion = ['advertir','sancion','historial','kick','ban','timeout','quitar_sancion','caso','limpiar','comandos'];
         if (nombresModeracion.includes(commandName)) {
@@ -2383,6 +2565,23 @@ client.on('interactionCreate', async function(interaction) {
         }
     }
 
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('postulacion:respuesta:')) {
+        const rango = interaction.customId.split(':')[2];
+        const respuesta = interaction.fields.getTextInputValue('respuesta').trim();
+        if (!ROLES_POSTULACION[rango] || !rangosPostulacion.includes(rango)) return interaction.reply({ content: 'Ese rango ya no está habilitado. Vuelve a iniciar la postulación.', ephemeral: true });
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+        if (!rangosPermitidosPara(member).includes(rango)) return interaction.reply({ content: 'Tu rango cambió o ya no cumples los requisitos para postularte.', ephemeral: true });
+        const token = crypto.randomUUID();
+        postulacionesPendientes.set(token, { guildId: interaction.guildId, usuarioId: interaction.user.id, usuarioNombre: interaction.user.tag, rango, respuesta, creado: Date.now() });
+        await logPostulacion(interaction.guild, `El usuario <@${interaction.user.id}> respondió la pregunta de su postulación a ${ROLES_POSTULACION[rango].nombre}.`, { usuarioId: interaction.user.id, usuarioNombre: interaction.user.tag, rango, respuesta });
+        const fila = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`postulacion:confirmar:${token}`).setLabel('Enviar respuestas').setStyle(3),
+            new ButtonBuilder().setCustomId(`postulacion:editar:${token}`).setLabel('Volver a responder').setStyle(1),
+            new ButtonBuilder().setCustomId(`postulacion:cancelar:${token}`).setLabel('Cancelar').setStyle(4)
+        );
+        return interaction.reply({ content: `**Rango:** ${ROLES_POSTULACION[rango].nombre}\n**¿Por qué te quieres postular?**\n${respuesta}\n\nRevisa tu respuesta y elige **Enviar respuestas** para registrar la postulación.`, components: [fila], ephemeral: true });
+    }
+
     // ========================================================
     // MENÚS DESPLEGABLES: REGLAS Y VALORES BRAINROT
     // ========================================================
@@ -2444,6 +2643,51 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const channel = interaction.channel;
         const member = interaction.member;
+
+        if (customId === 'postulacion:iniciar') {
+            if (!rangosPostulacion.length) return interaction.reply({ content: 'Por ahora no hay rangos habilitados para postulaciones. Consulta con la administración.', ephemeral: true });
+            const freshMember = await guild.members.fetch(user.id).catch(() => null);
+            const permitted = rangosPermitidosPara(freshMember);
+            if (!permitted.length) return interaction.reply({ content: '❌ Tu rango actual no puede postularse a ninguno de los rangos habilitados. Solo puedes avanzar un nivel.', ephemeral: true });
+            return interaction.reply({ content: 'Selecciona el siguiente rango al que deseas postularte. Los rangos que no corresponden a tu jerarquía estarán deshabilitados.', components: [crearBotonesRangos(freshMember)], ephemeral: true });
+        }
+        if (customId.startsWith('postulacion:rango:')) {
+            const rango = customId.split(':')[2];
+            const freshMember = await guild.members.fetch(user.id).catch(() => null);
+            if (!rangosPostulacion.includes(rango) || !rangosPermitidosPara(freshMember).includes(rango)) {
+                return interaction.reply({ content: '❌ No puedes postularte a ese rango. Debes avanzar solo al rango inmediatamente superior.', ephemeral: true });
+            }
+            const modal = new ModalBuilder().setCustomId(`postulacion:respuesta:${rango}`).setTitle(`Postulación: ${ROLES_POSTULACION[rango].nombre}`);
+            const respuesta = new TextInputBuilder().setCustomId('respuesta').setLabel(`¿Por qué te quieres postular a ${ROLES_POSTULACION[rango].nombre}?`).setStyle(TextInputStyle.Paragraph).setMinLength(10).setMaxLength(1800).setRequired(true).setPlaceholder('Explica tus motivos, experiencia y qué aportarías al equipo.');
+            modal.addComponents(new ActionRowBuilder().addComponents(respuesta));
+            return interaction.showModal(modal);
+        }
+
+        if (customId.startsWith('postulacion:confirmar:') || customId.startsWith('postulacion:cancelar:') || customId.startsWith('postulacion:editar:')) {
+            const partesCustom = customId.split(':');
+            const accion = partesCustom[1];
+            const token = partesCustom[2];
+            const pending = postulacionesPendientes.get(token);
+            if (!pending) return interaction.reply({ content: 'Esta postulación ya fue procesada o expiró.', ephemeral: true });
+            if (pending.usuarioId !== user.id) return interaction.reply({ content: 'Esta confirmación no te pertenece.', ephemeral: true });
+            if (accion === 'cancelar') {
+                postulacionesPendientes.delete(token);
+                await logPostulacion(guild, `El usuario <@${user.id}> canceló una postulación a ${ROLES_POSTULACION[pending.rango].nombre}.`);
+                return interaction.update({ content: 'Postulación cancelada. No se guardó.', components: [] });
+            }
+            if (accion === 'editar') {
+                const modal = new ModalBuilder().setCustomId(`postulacion:respuesta:${pending.rango}`).setTitle(`Postulación: ${ROLES_POSTULACION[pending.rango].nombre}`);
+                modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('respuesta').setLabel(`¿Por qué te quieres postular a ${ROLES_POSTULACION[pending.rango].nombre}?`).setStyle(TextInputStyle.Paragraph).setMinLength(10).setMaxLength(1800).setRequired(true).setValue(pending.respuesta.slice(0, 1800))));
+                postulacionesPendientes.delete(token);
+                return interaction.showModal(modal);
+            }
+            postulacionesPendientes.delete(token);
+            const p = { id: crypto.randomUUID().slice(0, 8).toUpperCase(), guildId: pending.guildId, usuarioId: pending.usuarioId, usuarioNombre: pending.usuarioNombre, rango: pending.rango, respuesta: pending.respuesta, fecha: formatearFecha(new Date()), estado: 'activa' };
+            postulaciones.push(p);
+            guardarPostulaciones();
+            await logPostulacion(guild, `Nueva postulación registrada: <@${user.id}> → ${ROLES_POSTULACION[p.rango].nombre}.`, p);
+            return interaction.update({ content: `✅ Tu postulación a **${ROLES_POSTULACION[p.rango].nombre}** fue enviada correctamente. La administración la revisará.`, components: [] });
+        }
 
         if (customId.startsWith('modconfirm:') || customId.startsWith('modcancel:')) {
             const token = customId.split(':')[1];
