@@ -1366,6 +1366,8 @@ async function ejecutarModeracion(nombre, datos, contexto, esSlash) {
 // SISTEMA DE POSTULACIONES
 // ============================================================
 const CANAL_POSTULACIONES_ACTIVAS = '1562599831204008007';
+const CANAL_LOGS_POSTULACIONES_ID = '1562622099745415258';
+const ROLE_POSTULAR_CUALQUIER_RANGO_ID = '1543766939833339990';
 const ARCHIVO_POSTULACIONES = path.join(__dirname, 'postulaciones.json');
 const ROLES_POSTULACION = {
     middleman: { id: '1499596482322501802', nombre: 'Middleman', color: 0x3498DB, estilo: 1 },
@@ -1403,6 +1405,8 @@ function rangoMasAltoPostulacion(member) {
     return -1;
 }
 function rangosPermitidosPara(member) {
+    // Este rol especial puede postularse a cualquier rango habilitado, sin importar su jerarquía.
+    if (member && member.roles.cache.has(ROLE_POSTULAR_CUALQUIER_RANGO_ID)) return [...rangosPostulacion];
     const nivel = rangoMasAltoPostulacion(member);
     // Los miembros base (incluido el rango Watones si no tiene un ID configurado aquí)
     // solo pueden solicitar Middleman; cada rango staff avanza exactamente un nivel.
@@ -1444,9 +1448,9 @@ function crearBotonesRangos(member) {
 }
 async function logPostulacion(guild, texto, postulacion = null) {
     try {
-        const canal = await guild.channels.fetch(CANAL_LOGS_ID).catch(() => null);
+        const canal = await guild.channels.fetch(CANAL_LOGS_POSTULACIONES_ID).catch(() => null);
         if (!canal || !canal.isTextBased()) return;
-        const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('📋 Registro de postulaciones')
+        const embed = new EmbedBuilder().setColor(0xF39C12).setTitle('📋 Registro de postulaciones')
             .setDescription(texto).setTimestamp();
         if (postulacion) embed.addFields(
             { name: 'Postulante', value: `<@${postulacion.usuarioId}>`, inline: true },
@@ -1618,11 +1622,8 @@ client.once('ready', async function() {
                 ]}]
             },
             {
-                name: 'mandar_postulacion',
-                description: 'Exportar postulantes y respuestas en TXT',
-                options: [{ name: 'rango', description: 'Rango que se exportará', type: ApplicationCommandOptionType.String, required: true, choices: [
-                    { name: 'Middleman', value: 'middleman' }, { name: 'Moderador', value: 'moderador' }, { name: 'Administrador', value: 'administrador' }, { name: 'Co-owner', value: 'co-owner' }
-                ]}]
+                name: 'clear_postulaciones_activas',
+                description: 'Borrar todas las postulaciones registradas y reiniciar el contador'
             },
             {
                 name: 'cmds', description: 'Ayuda de comandos por categoría',
@@ -1662,7 +1663,7 @@ client.on('interactionCreate', async function(interaction) {
         const member = interaction.member;
         const guild = interaction.guild;
 
-        if (['panel_postulaciones', 'añadir_rangos', 'eliminar_rangos', 'postulaciones_activas', 'mandar_postulacion'].includes(commandName)) {
+        if (['panel_postulaciones', 'añadir_rangos', 'eliminar_rangos', 'postulaciones_activas', 'clear_postulaciones_activas'].includes(commandName)) {
             if (!guild) return interaction.reply({ content: 'Este comando solo se puede usar en un servidor.', ephemeral: true });
             const actor = await guild.members.fetch(user.id).catch(() => null);
             if (commandName === 'panel_postulaciones') {
@@ -1700,15 +1701,19 @@ client.on('interactionCreate', async function(interaction) {
                 ).setFooter({ text: `ID: ${p.id}` }));
                 return interaction.reply({ content: `Postulaciones activas: **${lista.length}**`, embeds: embeds.slice(0, 10), ephemeral: true });
             }
-            if (commandName === 'mandar_postulacion') {
-                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administrador, co-owner o dueño puede exportar postulaciones.', ephemeral: true });
-                return enviarPostulacionesTXT(interaction, options.getString('rango', true));
+            if (commandName === 'clear_postulaciones_activas') {
+                if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administrador, co-owner o dueño puede borrar las postulaciones.', ephemeral: true });
+                const cantidadAnterior = postulaciones.length;
+                postulaciones = [];
+                guardarPostulaciones();
+                await logPostulacion(guild, `<@${user.id}> reinició el registro de postulaciones y eliminó **${cantidadAnterior}** postulación(es).`);
+                return interaction.reply({ content: `🧹 Se borraron **${cantidadAnterior}** postulaciones. El contador quedó en **0**. El stock de rangos habilitados se mantiene igual.`, ephemeral: true });
             }
         }
         if (commandName === 'cmds') {
             const sub = options.getSubcommand(true);
             if (sub !== 'postulaciones') return interaction.reply({ content: 'Usa `/cmds postulaciones`.', ephemeral: true });
-            return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Comandos de postulaciones').setColor(0xF39C12).setDescription('`/panel_postulaciones` — publica el panel con el GIF de Halloween.\n`/añadir_rangos rango` — añade un rango al stock mediante opciones.\n`/eliminar_rangos rango` — elimina un rango del stock mediante opciones.\n`/postulaciones_activas rango` — consulta las postulaciones activas y sus respuestas; úsalo en el canal designado.\n`/mandar_postulacion rango` — exporta postulantes y respuestas a **TXT RESULTADOS.txt**.\n\nLos rangos habilitados se limitan por jerarquía: miembro → Middleman → Moderador → Administrador → Co-owner.')], ephemeral: true });
+            return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Comandos de postulaciones').setColor(0xF39C12).setDescription('`/panel_postulaciones` — publica el panel con el GIF de Halloween.\n`/añadir_rangos rango` — añade un rango al stock mediante opciones.\n`/eliminar_rangos rango` — elimina un rango del stock mediante opciones.\n`/postulaciones_activas rango` — consulta las postulaciones activas y sus respuestas; úsalo en el canal designado.\n`/clear_postulaciones_activas` — elimina todas las postulaciones registradas y deja el contador en 0; solo administración.\n\nPor defecto, los miembros avanzan un rango por jerarquía. Quienes tengan el rol especial configurado pueden postularse a cualquier rango habilitado.')], ephemeral: true });
         }
 
         const nombresModeracion = ['advertir','sancion','historial','kick','ban','timeout','quitar_sancion','caso','limpiar','comandos'];
@@ -2661,9 +2666,10 @@ client.on('interactionCreate', async function(interaction) {
         if (customId === 'postulacion:iniciar') {
             if (!rangosPostulacion.length) return interaction.reply({ content: 'Por ahora no hay rangos habilitados para postulaciones. Consulta con la administración.', ephemeral: true });
             const freshMember = await guild.members.fetch(user.id).catch(() => null);
+            const puedeTodos = !!freshMember && freshMember.roles.cache.has(ROLE_POSTULAR_CUALQUIER_RANGO_ID);
             const permitted = rangosPermitidosPara(freshMember);
             if (!permitted.length) return interaction.reply({ content: '❌ Tu rango actual no puede postularse a ninguno de los rangos habilitados. Solo puedes avanzar un nivel.', ephemeral: true });
-            return interaction.reply({ content: 'Selecciona el siguiente rango al que deseas postularte. Los rangos que no corresponden a tu jerarquía estarán deshabilitados.', components: [crearBotonesRangos(freshMember)], ephemeral: true });
+            return interaction.reply({ content: puedeTodos ? 'Selecciona cualquier rango que esté habilitado para postulaciones.' : 'Selecciona el siguiente rango al que deseas postularte. Los rangos que no corresponden a tu jerarquía estarán deshabilitados.', components: [crearBotonesRangos(freshMember)], ephemeral: true });
         }
         if (customId.startsWith('postulacion:rango:')) {
             const rango = customId.split(':')[2];
