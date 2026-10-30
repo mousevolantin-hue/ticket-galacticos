@@ -1762,7 +1762,6 @@ client.once('ready', async function() {
                     description: 'Configura y publica un sorteo',
                     options: [
                         { name: 'duracion', description: 'Ejemplo: 1m, 1h, 1d, 1w, 1y', type: ApplicationCommandOptionType.String, required: true },
-                        { name: 'imagen', description: 'URL de la imagen del sorteo', type: ApplicationCommandOptionType.String, required: false },
                         { name: 'host', description: 'Persona que presenta el sorteo', type: ApplicationCommandOptionType.User, required: true },
                         { name: 'canal', description: 'Canal donde se publicará', type: ApplicationCommandOptionType.Channel, required: true, channel_types: [0, 5] },
                         { name: 'titulo', description: 'Premio o título del sorteo', type: ApplicationCommandOptionType.String, required: true, max_length: 200 },
@@ -1772,7 +1771,8 @@ client.once('ready', async function() {
                         ]},
                         { name: 'contador', description: 'Mostrar cuenta regresiva de 10 segundos en general', type: ApplicationCommandOptionType.String, required: true, choices: [
                             { name: 'Sí', value: 'si' }, { name: 'No', value: 'no' }
-                        ]}
+                        ]},
+                        { name: 'imagen', description: 'URL de la imagen del sorteo', type: ApplicationCommandOptionType.String, required: false }
                     ]
                 }]
             },
