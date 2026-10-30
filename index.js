@@ -137,14 +137,21 @@ async function finalizarSorteo(s, reroll = false) {
     if (s.contador && !s.contadorEnviado) {
         s.contadorEnviado = true;
         guardarSorteos();
-        const canalGeneral = guild.channels.cache.find(c => c.isTextBased() && c.name.toLowerCase() === 'general') || canal;
-        const msg = await canalGeneral.send('⏳ El ganador tiene 10 segundos para escribir **claim** en el canal del sorteo.').catch(() => null);
-        if (msg) {
-            for (let i = 10; i >= 1; i--) {
-                await msg.edit(`⏳ El ganador tiene **${i}** segundo(s) para escribir **claim** en <#${s.canalId}>.`).catch(() => null);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+        // El contador siempre se publica en el canal general configurado,
+        // nunca en el canal donde se publicó el sorteo.
+        const canalGeneral = await guild.channels.fetch('1498090090386161765').catch(() => null);
+        if (!canalGeneral || !canalGeneral.isTextBased() || !canalGeneral.send) {
+            console.error('No se pudo encontrar o enviar al canal general 1498090090386161765. Revisa que el bot tenga acceso y permisos.');
+        }
+        if (canalGeneral && canalGeneral.isTextBased() && canalGeneral.send) {
+            // Publica diez mensajes independientes: solo el número, uno por segundo.
+            for (let i = 1; i <= 10; i++) {
+                await canalGeneral.send(String(i)).catch(err => {
+                    console.error(`No se pudo enviar el número ${i} del contador al canal general:`, err);
+                    return null;
+                });
+                if (i < 10) await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            await msg.edit('⌛ Finalizó el contador de reclamación.').catch(() => null);
         }
     }
 }
@@ -1772,7 +1779,7 @@ client.once('ready', async function() {
                         { name: 'contador', description: 'Mostrar cuenta regresiva de 10 segundos en general', type: ApplicationCommandOptionType.String, required: true, choices: [
                             { name: 'Sí', value: 'si' }, { name: 'No', value: 'no' }
                         ]},
-                        { name: 'imagen', description: 'URL de la imagen del sorteo', type: ApplicationCommandOptionType.String, required: false }
+                        { name: 'imagen', description: 'Adjunta una imagen para el sorteo', type: ApplicationCommandOptionType.Attachment, required: false }
                     ]
                 }]
             },
@@ -1813,8 +1820,8 @@ client.on('interactionCreate', async function(interaction) {
             const duracionTexto = opcionesSorteo.getString('duracion', true);
             const duracionMs = parsearDuracionSorteo(duracionTexto);
             if (!duracionMs) return interaction.reply({ content: 'Duración inválida. Usa formatos como `1m`, `1h`, `1d`, `1w` o `1y` (máximo 1 año).', ephemeral: true });
-            const imagen = opcionesSorteo.getString('imagen');
-            if (imagen && !/^https?:\/\/\S+$/i.test(imagen)) return interaction.reply({ content: 'La imagen debe ser una URL HTTP o HTTPS válida.', ephemeral: true });
+            const archivoImagen = opcionesSorteo.getAttachment('imagen');
+            const imagen = archivoImagen ? archivoImagen.url : null;
             const host = opcionesSorteo.getUser('host', true);
             const canalDestino = opcionesSorteo.getChannel('canal', true);
             if (!canalDestino.isTextBased() || !canalDestino.send) return interaction.reply({ content: 'Selecciona un canal de texto válido.', ephemeral: true });
@@ -1824,7 +1831,7 @@ client.on('interactionCreate', async function(interaction) {
             const s = {
                 id: require('crypto').randomUUID().slice(0, 10),
                 guildId: servidorSorteo.id, canalId: canalDestino.id, creadorId: usuarioSorteo.id, hostId: host.id,
-                titulo, imagen: imagen || null, color, contador, contadorEnviado: false,
+                titulo, imagen, color, contador, contadorEnviado: false,
                 creado: Date.now(), termina: Date.now() + duracionMs, participantes: [],
                 ganadoresAnteriores: [], ganadorId: null, estado: 'activo'
             };
