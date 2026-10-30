@@ -70,8 +70,22 @@ function embedSorteo(s) {
     return e;
 }
 function filaParticipar(s) {
+    // Discord solo permite cuatro estilos de botón; se aproxima al color elegido por el host.
+    const estilos = {
+        rojo: 4,       // Danger
+        verde: 3,      // Success
+        azul: 1,       // Primary
+        amarillo: 2,   // Secondary
+        morado: 1,     // Primary
+        naranja: 2,    // Secondary
+        negro: 2       // Secondary
+    };
     return new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`sorteo:entrar:${s.id}`).setLabel('Participar').setEmoji('🎉').setStyle(3)
+        new ButtonBuilder()
+            .setCustomId(`sorteo:entrar:${s.id}`)
+            .setLabel('Participar')
+            .setEmoji('🎉')
+            .setStyle(estilos[s.color] || 3)
     );
 }
 function filaPanelSorteo(s) {
@@ -1848,55 +1862,7 @@ client.on('interactionCreate', async function(interaction) {
         const channel = interaction.channel;
         const user = interaction.user;
         const member = interaction.member;
-        if (customId.startsWith('sorteo:')) {
-            const [, accion, sorteoId] = customId.split(':');
-            const s = sorteos.find(x => x.id === sorteoId);
-            if (!s) return interaction.reply({ content: 'Este sorteo ya no está disponible.', ephemeral: true });
 
-            if (accion === 'entrar') {
-                if (s.estado !== 'activo' || Date.now() >= s.termina) return interaction.reply({ content: 'Este sorteo ya terminó.', ephemeral: true });
-                if (s.participantes.includes(user.id)) return interaction.reply({ content: 'Ya estás participando en este sorteo.', ephemeral: true });
-                s.participantes.push(user.id);
-                guardarSorteos();
-                const msg = await channel.messages.fetch(s.mensajeId).catch(() => null);
-                if (msg) await msg.edit({ embeds: [embedSorteo(s)], components: [filaParticipar(s)] }).catch(() => null);
-                return interaction.reply({ content: '🎉 ¡Ya estás participando!', ephemeral: true });
-            }
-
-            if (user.id !== s.creadorId) return interaction.reply({ content: '❌ Solo quien creó este sorteo puede usar este panel.', ephemeral: true });
-            if (accion === 'reclamado') {
-                s.reclamado = true;
-                guardarSorteos();
-                return interaction.update({ content: `🟢 El premio de **${s.titulo}** quedó marcado como reclamado.`, embeds: [], components: [] });
-            }
-            if (accion === 'reroll') {
-                if (s.estado !== 'finalizado') return interaction.reply({ content: 'Este sorteo no está finalizado.', ephemeral: true });
-                await interaction.deferUpdate();
-                s.estado = 'activo';
-                s.ganadorId = null;
-                s.termina = Date.now();
-                await finalizarSorteo(s, true);
-                return interaction.editReply({ content: '🟡 Se realizó el reroll. Revisa el nuevo ganador en el canal del sorteo.', embeds: [], components: [] });
-            }
-            if (accion === 'cancelar') {
-                const fila = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`sorteo:confirmarcancelar:${s.id}`).setLabel('Sí, cancelar').setStyle(4),
-                    new ButtonBuilder().setCustomId(`sorteo:volver:${s.id}`).setLabel('Volver').setStyle(2)
-                );
-                return interaction.reply({ content: `¿Confirmas cancelar el sorteo **${s.titulo}**?`, components: [fila], ephemeral: true });
-            }
-            if (accion === 'confirmarcancelar') {
-                s.estado = 'cancelado';
-                if (s.timer) clearTimeout(s.timer);
-                guardarSorteos();
-                const guildObj = await client.guilds.fetch(s.guildId).catch(() => null);
-                const canalObj = guildObj ? await guildObj.channels.fetch(s.canalId).catch(() => null) : null;
-                const msg = canalObj ? await canalObj.messages.fetch(s.mensajeId).catch(() => null) : null;
-                if (msg) await msg.edit({ content: '🚫 Este sorteo fue cancelado.', embeds: [], components: [] }).catch(() => null);
-                return interaction.update({ content: '🔴 Sorteo cancelado correctamente.', components: [] });
-            }
-            if (accion === 'volver') return interaction.update({ content: 'Cancelación descartada.', components: [] });
-        }
 
         const guild = interaction.guild;
 
@@ -2899,6 +2865,65 @@ client.on('interactionCreate', async function(interaction) {
         const user = interaction.user;
         const channel = interaction.channel;
         const member = interaction.member;
+
+        if (customId.startsWith('sorteo:')) {
+            const [, accion, sorteoId] = customId.split(':');
+            const s = sorteos.find(x => x.id === sorteoId);
+            if (!s) return interaction.reply({ content: 'Este sorteo ya no está disponible.', ephemeral: true });
+
+            if (accion === 'entrar') {
+                // Reconocer el botón inmediatamente para evitar el error de "la aplicación no respondió".
+                await interaction.deferUpdate();
+                if (s.estado !== 'activo' || Date.now() >= s.termina) {
+                    return interaction.followUp({ content: 'Este sorteo ya terminó.', ephemeral: true });
+                }
+                if (s.participantes.includes(user.id)) {
+                    return interaction.followUp({ content: 'Ya estás participando en este sorteo.', ephemeral: true });
+                }
+                s.participantes.push(user.id);
+                guardarSorteos();
+                try {
+                    await interaction.message.edit({ embeds: [embedSorteo(s)], components: [filaParticipar(s)] });
+                } catch (error) {
+                    console.error('No se pudo actualizar el mensaje del sorteo:', error);
+                }
+                return interaction.followUp({ content: '🎉 ¡Ya estás participando!', ephemeral: true });
+            }
+
+            if (user.id !== s.creadorId) return interaction.reply({ content: '❌ Solo quien creó este sorteo puede usar este panel.', ephemeral: true });
+            if (accion === 'reclamado') {
+                s.reclamado = true;
+                guardarSorteos();
+                return interaction.update({ content: `🟢 El premio de **${s.titulo}** quedó marcado como reclamado.`, embeds: [], components: [] });
+            }
+            if (accion === 'reroll') {
+                if (s.estado !== 'finalizado') return interaction.reply({ content: 'Este sorteo no está finalizado.', ephemeral: true });
+                await interaction.deferUpdate();
+                s.estado = 'activo';
+                s.ganadorId = null;
+                s.termina = Date.now();
+                await finalizarSorteo(s, true);
+                return interaction.editReply({ content: '🟡 Se realizó el reroll. Revisa el nuevo ganador en el canal del sorteo.', embeds: [], components: [] });
+            }
+            if (accion === 'cancelar') {
+                const fila = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`sorteo:confirmarcancelar:${s.id}`).setLabel('Sí, cancelar').setStyle(4),
+                    new ButtonBuilder().setCustomId(`sorteo:volver:${s.id}`).setLabel('Volver').setStyle(2)
+                );
+                return interaction.reply({ content: `¿Confirmas cancelar el sorteo **${s.titulo}**?`, components: [fila], ephemeral: true });
+            }
+            if (accion === 'confirmarcancelar') {
+                s.estado = 'cancelado';
+                if (s.timer) clearTimeout(s.timer);
+                guardarSorteos();
+                const guildObj = await client.guilds.fetch(s.guildId).catch(() => null);
+                const canalObj = guildObj ? await guildObj.channels.fetch(s.canalId).catch(() => null) : null;
+                const msg = canalObj ? await canalObj.messages.fetch(s.mensajeId).catch(() => null) : null;
+                if (msg) await msg.edit({ content: '🚫 Este sorteo fue cancelado.', embeds: [], components: [] }).catch(() => null);
+                return interaction.update({ content: '🔴 Sorteo cancelado correctamente.', components: [] });
+            }
+            if (accion === 'volver') return interaction.update({ content: 'Cancelación descartada.', components: [] });
+        }
 
         if (customId === 'postulacion:iniciar') {
             if (!rangosPostulacion.length) return interaction.reply({ content: 'Por ahora no hay rangos habilitados para postulaciones. Consulta con la administración.', ephemeral: true });
