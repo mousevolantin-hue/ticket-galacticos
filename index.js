@@ -1805,22 +1805,25 @@ client.on('interactionCreate', async function(interaction) {
     if (interaction.isChatInputCommand()) {
 
         const commandName = interaction.commandName;
-        if (commandName === 'crear' && options.getSubcommand() === 'sorteo') {
-            if (!guild) return interaction.reply({ content: 'Este comando solo se puede usar dentro de un servidor.', ephemeral: true });
-            const duracionTexto = options.getString('duracion', true);
+        if (commandName === 'crear' && interaction.options.getSubcommand() === 'sorteo') {
+            const opcionesSorteo = interaction.options;
+            const servidorSorteo = interaction.guild;
+            const usuarioSorteo = interaction.user;
+            if (!servidorSorteo) return interaction.reply({ content: 'Este comando solo se puede usar dentro de un servidor.', ephemeral: true });
+            const duracionTexto = opcionesSorteo.getString('duracion', true);
             const duracionMs = parsearDuracionSorteo(duracionTexto);
             if (!duracionMs) return interaction.reply({ content: 'Duración inválida. Usa formatos como `1m`, `1h`, `1d`, `1w` o `1y` (máximo 1 año).', ephemeral: true });
-            const imagen = options.getString('imagen');
+            const imagen = opcionesSorteo.getString('imagen');
             if (imagen && !/^https?:\/\/\S+$/i.test(imagen)) return interaction.reply({ content: 'La imagen debe ser una URL HTTP o HTTPS válida.', ephemeral: true });
-            const host = options.getUser('host', true);
-            const canalDestino = options.getChannel('canal', true);
+            const host = opcionesSorteo.getUser('host', true);
+            const canalDestino = opcionesSorteo.getChannel('canal', true);
             if (!canalDestino.isTextBased() || !canalDestino.send) return interaction.reply({ content: 'Selecciona un canal de texto válido.', ephemeral: true });
-            const titulo = options.getString('titulo', true).trim();
-            const color = options.getString('color', true);
-            const contador = options.getString('contador', true) === 'si';
+            const titulo = opcionesSorteo.getString('titulo', true).trim();
+            const color = opcionesSorteo.getString('color', true);
+            const contador = opcionesSorteo.getString('contador', true) === 'si';
             const s = {
                 id: require('crypto').randomUUID().slice(0, 10),
-                guildId: guild.id, canalId: canalDestino.id, creadorId: user.id, hostId: host.id,
+                guildId: servidorSorteo.id, canalId: canalDestino.id, creadorId: usuarioSorteo.id, hostId: host.id,
                 titulo, imagen: imagen || null, color, contador, contadorEnviado: false,
                 creado: Date.now(), termina: Date.now() + duracionMs, participantes: [],
                 ganadoresAnteriores: [], ganadorId: null, estado: 'activo'
