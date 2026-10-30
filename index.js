@@ -32,6 +32,130 @@ const GIF_COMANDOS = GIF_NUEVO;
 const CERBERUS_PATH = path.join(__dirname, 'cerberus.png');
 const CANAL_REGISTROS_MIDDLEMAN = '1555339131964489899';
 
+// ============================================================
+// SISTEMA DE SORTEOS THE GALACTICS
+// ============================================================
+const ARCHIVO_SORTEOS = path.join(__dirname, 'sorteos.json');
+let sorteos = [];
+try {
+    if (fs.existsSync(ARCHIVO_SORTEOS)) {
+        const datos = JSON.parse(fs.readFileSync(ARCHIVO_SORTEOS, 'utf8') || '[]');
+        sorteos = Array.isArray(datos) ? datos : [];
+    }
+} catch (error) {
+    console.error('No se pudo cargar sorteos.json:', error);
+}
+function guardarSorteos() {
+    fs.writeFileSync(ARCHIVO_SORTEOS, JSON.stringify(sorteos, null, 2), 'utf8');
+}
+function parsearDuracionSorteo(valor) {
+    const m = String(valor || '').trim().match(/^(\d+)\s*(s|m|h|d|w|y)$/i);
+    if (!m) return null;
+    const n = Number(m[1]);
+    const unidades = { s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000, y: 31536000000 };
+    const ms = n * unidades[m[2].toLowerCase()];
+    return Number.isSafeInteger(ms) && ms > 0 && ms <= 31536000000 ? ms : null;
+}
+function colorSorteo(valor) {
+    return ({ rojo: 0xE74C3C, verde: 0x2ECC71, azul: 0x3498DB, amarillo: 0xF1C40F, morado: 0x9B59B6, naranja: 0xE67E22, negro: 0x2B2D31 })[valor] || 0xE67E22;
+}
+function embedSorteo(s) {
+    const e = new EmbedBuilder()
+        .setColor(colorSorteo(s.color))
+        .setTitle(`🎉 ${s.titulo}`)
+        .setDescription(`**Organizado por:** <@${s.hostId}>\n\nPulsa el botón para participar.\n\n**Participantes:** ${s.participantes.length}\n**Finaliza:** <t:${Math.floor(s.termina / 1000)}:R>`)
+        .setFooter({ text: `The Galactics • Sorteo ${s.id}` })
+        .setTimestamp(new Date(s.creado));
+    if (s.imagen) e.setImage(s.imagen);
+    return e;
+}
+function filaParticipar(s) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`sorteo:entrar:${s.id}`).setLabel('Participar').setEmoji('🎉').setStyle(3)
+    );
+}
+function filaPanelSorteo(s) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`sorteo:reclamado:${s.id}`).setLabel('Reclamado').setStyle(3),
+        new ButtonBuilder().setCustomId(`sorteo:reroll:${s.id}`).setLabel('Reroll').setStyle(2),
+        new ButtonBuilder().setCustomId(`sorteo:cancelar:${s.id}`).setLabel('Cancelar sorteo').setStyle(4)
+    );
+}
+async function finalizarSorteo(s, reroll = false) {
+    if (!s || s.estado === 'cancelado') return;
+    const guild = await client.guilds.fetch(s.guildId).catch(() => null);
+    const canal = guild ? await guild.channels.fetch(s.canalId).catch(() => null) : null;
+    if (!guild || !canal || !canal.isTextBased()) return;
+    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+
+    const anteriores = Array.isArray(s.ganadoresAnteriores) ? s.ganadoresAnteriores : [];
+    const elegibles = s.participantes.filter(id => !anteriores.includes(id));
+    if (!elegibles.length) {
+        s.estado = 'finalizado';
+        s.ganadorId = null;
+        guardarSorteos();
+        await canal.send(`🎉 El sorteo **${s.titulo}** terminó, pero no quedan participantes elegibles para otro ganador.`);
+    } else {
+        const ganadorId = elegibles[Math.floor(Math.random() * elegibles.length)];
+        s.ganadorId = ganadorId;
+        s.ganadoresAnteriores = [...anteriores, ganadorId];
+        s.estado = 'finalizado';
+        guardarSorteos();
+
+        const resultado = new EmbedBuilder()
+            .setColor(colorSorteo(s.color))
+            .setTitle('🏆 ¡Sorteo finalizado!')
+            .setDescription(`¡Felicidades <@${ganadorId}>! Has ganado **${s.titulo}**.\n\nEscribe **claim** en este canal para reclamar tu premio.`)
+            .setTimestamp();
+        if (s.imagen) resultado.setImage(s.imagen);
+        await canal.send({ content: `<@${ganadorId}>`, embeds: [resultado], allowedMentions: { users: [ganadorId] } });
+
+        const ganador = await client.users.fetch(ganadorId).catch(() => null);
+        if (ganador) {
+            const dm = new EmbedBuilder()
+                .setColor(colorSorteo(s.color))
+                .setTitle('🎉 ¡Felicitaciones!')
+                .setDescription(`¡Enhorabuena! Has ganado el sorteo **${s.titulo}** en **${guild.name}**.\n\nDirígete a <#${s.canalId}> y escribe **claim** para reclamar tu premio.`)
+                .setImage(GIF_NUEVO)
+                .setFooter({ text: 'The Galactics Bot' });
+            await ganador.send({ embeds: [dm] }).catch(() => null);
+        }
+    }
+
+    // El panel se envía inmediatamente al organizador por DM al terminar.
+    const host = await client.users.fetch(s.creadorId).catch(() => null);
+    if (host) {
+        const panel = new EmbedBuilder()
+            .setColor(0xF1C40F)
+            .setTitle('Panel de sorteo')
+            .setDescription(s.ganadorId
+                ? `<@${s.ganadorId}> ha ganado **${s.titulo}**.\nGestiona el resultado con los botones.`
+                : `El sorteo **${s.titulo}** terminó sin ganador disponible.`);
+        await host.send({ embeds: [panel], components: [filaPanelSorteo(s)] }).catch(() => null);
+    }
+
+    if (s.contador && !s.contadorEnviado) {
+        s.contadorEnviado = true;
+        guardarSorteos();
+        const canalGeneral = guild.channels.cache.find(c => c.isTextBased() && c.name.toLowerCase() === 'general') || canal;
+        const msg = await canalGeneral.send('⏳ El ganador tiene 10 segundos para escribir **claim** en el canal del sorteo.').catch(() => null);
+        if (msg) {
+            for (let i = 10; i >= 1; i--) {
+                await msg.edit(`⏳ El ganador tiene **${i}** segundo(s) para escribir **claim** en <#${s.canalId}>.`).catch(() => null);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            await msg.edit('⌛ Finalizó el contador de reclamación.').catch(() => null);
+        }
+    }
+}
+function programarSorteo(s) {
+    if (s.estado !== 'activo') return;
+    const restante = s.termina - Date.now();
+    if (restante <= 0) return void finalizarSorteo(s);
+    s.timer = setTimeout(() => finalizarSorteo(s).catch(err => console.error('Error finalizando sorteo:', err)), restante);
+}
+
+
 
 const app = express();
 
@@ -1629,6 +1753,29 @@ client.once('ready', async function() {
                 name: 'cmds', description: 'Ayuda de comandos por categoría',
                 options: [{ type: ApplicationCommandOptionType.Subcommand, name: 'postulaciones', description: 'Comandos y funciones del sistema de postulaciones' }]
             },
+            {
+                name: 'crear',
+                description: 'Crear un sorteo de The Galactics',
+                options: [{
+                    type: ApplicationCommandOptionType.Subcommand,
+                    name: 'sorteo',
+                    description: 'Configura y publica un sorteo',
+                    options: [
+                        { name: 'duracion', description: 'Ejemplo: 1m, 1h, 1d, 1w, 1y', type: ApplicationCommandOptionType.String, required: true },
+                        { name: 'imagen', description: 'URL de la imagen del sorteo', type: ApplicationCommandOptionType.String, required: false },
+                        { name: 'host', description: 'Persona que presenta el sorteo', type: ApplicationCommandOptionType.User, required: true },
+                        { name: 'canal', description: 'Canal donde se publicará', type: ApplicationCommandOptionType.Channel, required: true, channel_types: [0, 5] },
+                        { name: 'titulo', description: 'Premio o título del sorteo', type: ApplicationCommandOptionType.String, required: true, max_length: 200 },
+                        { name: 'color', description: 'Color del sorteo', type: ApplicationCommandOptionType.String, required: true, choices: [
+                            { name: 'Rojo', value: 'rojo' }, { name: 'Verde', value: 'verde' }, { name: 'Azul', value: 'azul' },
+                            { name: 'Amarillo', value: 'amarillo' }, { name: 'Morado', value: 'morado' }, { name: 'Naranja', value: 'naranja' }, { name: 'Negro', value: 'negro' }
+                        ]},
+                        { name: 'contador', description: 'Mostrar cuenta regresiva de 10 segundos en general', type: ApplicationCommandOptionType.String, required: true, choices: [
+                            { name: 'Sí', value: 'si' }, { name: 'No', value: 'no' }
+                        ]}
+                    ]
+                }]
+            },
             ...definicionesComandosModeracion()
 
         ]);
@@ -1636,6 +1783,7 @@ client.once('ready', async function() {
         console.log('🤖 Comandos Slash registrados correctamente.');
         setInterval(() => procesarVencimientosBan().catch(err => console.error('Error revisando baneos temporales:', err)), 60 * 1000);
         procesarVencimientosBan().catch(err => console.error('Error inicial revisando baneos temporales:', err));
+        for (const sorteo of sorteos) programarSorteo(sorteo);
 
     } catch (err) {
 
@@ -1657,10 +1805,89 @@ client.on('interactionCreate', async function(interaction) {
     if (interaction.isChatInputCommand()) {
 
         const commandName = interaction.commandName;
+        if (commandName === 'crear' && options.getSubcommand() === 'sorteo') {
+            if (!guild) return interaction.reply({ content: 'Este comando solo se puede usar dentro de un servidor.', ephemeral: true });
+            const duracionTexto = options.getString('duracion', true);
+            const duracionMs = parsearDuracionSorteo(duracionTexto);
+            if (!duracionMs) return interaction.reply({ content: 'Duración inválida. Usa formatos como `1m`, `1h`, `1d`, `1w` o `1y` (máximo 1 año).', ephemeral: true });
+            const imagen = options.getString('imagen');
+            if (imagen && !/^https?:\/\/\S+$/i.test(imagen)) return interaction.reply({ content: 'La imagen debe ser una URL HTTP o HTTPS válida.', ephemeral: true });
+            const host = options.getUser('host', true);
+            const canalDestino = options.getChannel('canal', true);
+            if (!canalDestino.isTextBased() || !canalDestino.send) return interaction.reply({ content: 'Selecciona un canal de texto válido.', ephemeral: true });
+            const titulo = options.getString('titulo', true).trim();
+            const color = options.getString('color', true);
+            const contador = options.getString('contador', true) === 'si';
+            const s = {
+                id: require('crypto').randomUUID().slice(0, 10),
+                guildId: guild.id, canalId: canalDestino.id, creadorId: user.id, hostId: host.id,
+                titulo, imagen: imagen || null, color, contador, contadorEnviado: false,
+                creado: Date.now(), termina: Date.now() + duracionMs, participantes: [],
+                ganadoresAnteriores: [], ganadorId: null, estado: 'activo'
+            };
+            const publicado = await canalDestino.send({ embeds: [embedSorteo(s)], components: [filaParticipar(s)] }).catch(() => null);
+            if (!publicado) return interaction.reply({ content: '❌ No pude publicar el sorteo. Revisa mis permisos en ese canal.', ephemeral: true });
+            s.mensajeId = publicado.id;
+            sorteos.push(s);
+            guardarSorteos();
+            programarSorteo(s);
+            return interaction.reply({ content: `✅ Sorteo **${titulo}** publicado en <#${canalDestino.id}>. Termina <t:${Math.floor(s.termina / 1000)}:R>.`, ephemeral: true });
+        }
+
         const options = interaction.options;
         const channel = interaction.channel;
         const user = interaction.user;
         const member = interaction.member;
+        if (customId.startsWith('sorteo:')) {
+            const [, accion, sorteoId] = customId.split(':');
+            const s = sorteos.find(x => x.id === sorteoId);
+            if (!s) return interaction.reply({ content: 'Este sorteo ya no está disponible.', ephemeral: true });
+
+            if (accion === 'entrar') {
+                if (s.estado !== 'activo' || Date.now() >= s.termina) return interaction.reply({ content: 'Este sorteo ya terminó.', ephemeral: true });
+                if (s.participantes.includes(user.id)) return interaction.reply({ content: 'Ya estás participando en este sorteo.', ephemeral: true });
+                s.participantes.push(user.id);
+                guardarSorteos();
+                const msg = await channel.messages.fetch(s.mensajeId).catch(() => null);
+                if (msg) await msg.edit({ embeds: [embedSorteo(s)], components: [filaParticipar(s)] }).catch(() => null);
+                return interaction.reply({ content: '🎉 ¡Ya estás participando!', ephemeral: true });
+            }
+
+            if (user.id !== s.creadorId) return interaction.reply({ content: '❌ Solo quien creó este sorteo puede usar este panel.', ephemeral: true });
+            if (accion === 'reclamado') {
+                s.reclamado = true;
+                guardarSorteos();
+                return interaction.update({ content: `🟢 El premio de **${s.titulo}** quedó marcado como reclamado.`, embeds: [], components: [] });
+            }
+            if (accion === 'reroll') {
+                if (s.estado !== 'finalizado') return interaction.reply({ content: 'Este sorteo no está finalizado.', ephemeral: true });
+                await interaction.deferUpdate();
+                s.estado = 'activo';
+                s.ganadorId = null;
+                s.termina = Date.now();
+                await finalizarSorteo(s, true);
+                return interaction.editReply({ content: '🟡 Se realizó el reroll. Revisa el nuevo ganador en el canal del sorteo.', embeds: [], components: [] });
+            }
+            if (accion === 'cancelar') {
+                const fila = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`sorteo:confirmarcancelar:${s.id}`).setLabel('Sí, cancelar').setStyle(4),
+                    new ButtonBuilder().setCustomId(`sorteo:volver:${s.id}`).setLabel('Volver').setStyle(2)
+                );
+                return interaction.reply({ content: `¿Confirmas cancelar el sorteo **${s.titulo}**?`, components: [fila], ephemeral: true });
+            }
+            if (accion === 'confirmarcancelar') {
+                s.estado = 'cancelado';
+                if (s.timer) clearTimeout(s.timer);
+                guardarSorteos();
+                const guildObj = await client.guilds.fetch(s.guildId).catch(() => null);
+                const canalObj = guildObj ? await guildObj.channels.fetch(s.canalId).catch(() => null) : null;
+                const msg = canalObj ? await canalObj.messages.fetch(s.mensajeId).catch(() => null) : null;
+                if (msg) await msg.edit({ content: '🚫 Este sorteo fue cancelado.', embeds: [], components: [] }).catch(() => null);
+                return interaction.update({ content: '🔴 Sorteo cancelado correctamente.', components: [] });
+            }
+            if (accion === 'volver') return interaction.update({ content: 'Cancelación descartada.', components: [] });
+        }
+
         const guild = interaction.guild;
 
         if (['panel_postulaciones', 'añadir_rangos', 'eliminar_rangos', 'postulaciones_activas', 'clear_postulaciones_activas'].includes(commandName)) {
@@ -3702,6 +3929,14 @@ client.on('interactionCreate', async function(interaction) {
 // COMANDOS DE MODERACIÓN CON PREFIJO "."
 // ============================================================
 client.on('messageCreate', async (message) => {
+    if (message.guild && !message.author.bot && message.content.trim().toLowerCase() === 'claim') {
+        const s = sorteos.find(x => x.guildId === message.guild.id && x.canalId === message.channel.id && x.estado === 'finalizado' && x.ganadorId === message.author.id && !x.reclamado);
+        if (s) {
+            s.reclamado = true;
+            guardarSorteos();
+            await message.reply('✅ ¡Tu premio quedó reclamado! El organizador ya puede confirmarlo en su panel.');
+        }
+    }
     if (!message.guild || message.author.bot || !message.content.startsWith('.')) return;
     const partes = message.content.trim().slice(1).split(/\s+/);
     const nombre = (partes.shift() || '').toLowerCase();
