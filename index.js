@@ -170,10 +170,37 @@ async function finalizarSorteo(s, reroll = false) {
     }
 }
 function programarSorteo(s) {
-    if (s.estado !== 'activo') return;
-    const restante = s.termina - Date.now();
-    if (restante <= 0) return void finalizarSorteo(s);
-    s.timer = setTimeout(() => finalizarSorteo(s).catch(err => console.error('Error finalizando sorteo:', err)), restante);
+    if (!s || s.estado !== 'activo') return;
+    if (s.timer) clearTimeout(s.timer);
+
+    const termina = Number(s.termina);
+    if (!Number.isFinite(termina)) {
+        console.error(`El sorteo ${s.id} tiene una fecha de finalización inválida:`, s.termina);
+        return;
+    }
+
+    const restante = termina - Date.now();
+    if (restante <= 0) {
+        s.timer = setTimeout(() => {
+            if (s.estado === 'activo' && Number(s.termina) <= Date.now()) {
+                finalizarSorteo(s).catch(err => console.error('Error finalizando sorteo:', err));
+            }
+        }, 0);
+        return;
+    }
+
+    // Node.js no admite temporizadores mayores a 2^31-1 ms (~24,8 días).
+    // Para sorteos largos, se programa por tramos y se vuelve a comprobar la fecha real.
+    const MAX_TIMEOUT = 2147483647;
+    const espera = Math.min(restante, MAX_TIMEOUT);
+    s.timer = setTimeout(() => {
+        if (s.estado !== 'activo') return;
+        if (Number(s.termina) <= Date.now()) {
+            finalizarSorteo(s).catch(err => console.error('Error finalizando sorteo:', err));
+        } else {
+            programarSorteo(s);
+        }
+    }, espera);
 }
 
 
@@ -2872,22 +2899,38 @@ client.on('interactionCreate', async function(interaction) {
             if (!s) return interaction.reply({ content: 'Este sorteo ya no está disponible.', ephemeral: true });
 
             if (accion === 'entrar') {
-                // Reconocer el botón inmediatamente para evitar el error de "la aplicación no respondió".
-                await interaction.deferUpdate();
-                if (s.estado !== 'activo' || Date.now() >= s.termina) {
-                    return interaction.followUp({ content: 'Este sorteo ya terminó.', ephemeral: true });
-                }
-                if (s.participantes.includes(user.id)) {
-                    return interaction.followUp({ content: 'Ya estás participando en este sorteo.', ephemeral: true });
-                }
-                s.participantes.push(user.id);
-                guardarSorteos();
+                // Responder de inmediato con una respuesta privada; evita depender de followUp tras deferUpdate.
                 try {
-                    await interaction.message.edit({ embeds: [embedSorteo(s)], components: [filaParticipar(s)] });
+                    await interaction.deferReply({ ephemeral: true });
                 } catch (error) {
-                    console.error('No se pudo actualizar el mensaje del sorteo:', error);
+                    console.error('No se pudo reconocer la interacción del botón Participar:', error);
+                    return;
                 }
-                return interaction.followUp({ content: '🎉 ¡Ya estás participando!', ephemeral: true });
+
+                try {
+                    if (s.estado !== 'activo' || Date.now() >= Number(s.termina)) {
+                        return await interaction.editReply('Este sorteo ya terminó.');
+                    }
+
+                    if (!Array.isArray(s.participantes)) s.participantes = [];
+                    if (s.participantes.includes(user.id)) {
+                        return await interaction.editReply('Ya estás participando en este sorteo.');
+                    }
+
+                    s.participantes.push(user.id);
+                    guardarSorteos();
+
+                    // Actualizar el mensaje público sin retrasar el reconocimiento del botón.
+                    await interaction.message.edit({
+                        embeds: [embedSorteo(s)],
+                        components: [filaParticipar(s)]
+                    });
+
+                    return await interaction.editReply('🎉 ¡Ya estás participando!');
+                } catch (error) {
+                    console.error('Error al procesar la participación en el sorteo:', error);
+                    return interaction.editReply('No se pudo registrar tu participación. Inténtalo nuevamente.').catch(() => null);
+                }
             }
 
             if (user.id !== s.creadorId) return interaction.reply({ content: '❌ Solo quien creó este sorteo puede usar este panel.', ephemeral: true });
