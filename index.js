@@ -1567,6 +1567,47 @@ function guardarPostulaciones() {
 }
 cargarPostulaciones();
 
+// ============================================================
+// CONEXIÓN CON THE GALACTICS BOT MANAGER
+// ============================================================
+
+async function enviarHeartbeat() {
+    if (!client.user) return;
+
+    if (!process.env.TG_API_SECRET) {
+        console.error('❌ Falta TG_API_SECRET.');
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            'https://the-galactics-bot-manager.pages.dev/api/bridge/heartbeat',
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${process.env.TG_API_SECRET}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    botId: client.user.id,
+                    username: client.user.tag,
+                    guildCount: client.guilds.cache.size,
+                    uptime: Math.floor(process.uptime())
+                })
+            }
+        );
+
+        if (!response.ok) {
+            console.error(`⚠️ Heartbeat rechazado. HTTP ${response.status}`);
+            return;
+        }
+
+        console.log('💓 Heartbeat enviado correctamente al dashboard.');
+    } catch (error) {
+        console.error('⚠️ Error enviando heartbeat:', error.message);
+    }
+}
+
 function rangoMasAltoPostulacion(member) {
     if (!member) return -1;
     // El dueño del servidor equivale al nivel más alto.
@@ -1652,6 +1693,9 @@ async function enviarPostulacionesTXT(interaction, rango) {
 client.once('ready', async function() {
 
     console.log('✅ Bot conectado como: ' + client.user.tag);
+
+await enviarHeartbeat();
+setInterval(enviarHeartbeat, 30000);
 
     try {
 
