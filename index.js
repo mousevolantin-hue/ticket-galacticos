@@ -1608,6 +1608,270 @@ async function enviarHeartbeat() {
     }
 }
 
+
+// ============================================================
+// INTEGRACIÓN THE GALACTICS BOT MANAGER (acciones + telemetría)
+// ============================================================
+const TG_MANAGER_URL = 'https://the-galactics-bot-manager.pages.dev';
+let tgManagerPolling = false;
+let tgManagerConfigSnapshot = '';
+const tgManagerRecentLogs = [];
+
+function tgManagerLog(message, level = 'info') {
+    tgManagerRecentLogs.push({
+        timestamp: new Date().toISOString(),
+        level,
+        message: String(message || '').slice(0, 500)
+    });
+    while (tgManagerRecentLogs.length > 100) tgManagerRecentLogs.shift();
+    console[level === 'error' ? 'error' : 'log']('[Bot Manager] ' + message);
+}
+
+async function tgManagerRequest(route, options = {}) {
+    const secret = process.env.TG_API_SECRET;
+    if (!secret) throw new Error('Falta configurar TG_API_SECRET en el hosting.');
+    const response = await fetch(TG_MANAGER_URL + route, {
+        ...options,
+        headers: {
+            'Authorization': 'Bearer ' + secret,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        },
+        signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error('HTTP ' + response.status + (body ? ': ' + body.slice(0, 180) : ''));
+    }
+    const type = response.headers.get('content-type') || '';
+    return type.includes('application/json') ? response.json() : response.text();
+}
+
+function tgManagerPermission(member, permission) {
+    return !!member && (member.id === member.guild.ownerId ||
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.permissions.has(permission));
+}
+
+function tgManagerDuration(value) {
+    const match = String(value || '').trim().match(/^(\d{1,2})(m|h|d)$/i);
+    if (!match) return null;
+    const amount = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    const ms = amount * (unit === 'd' ? 86400000 : unit === 'h' ? 3600000 : 60000);
+    return Number.isSafeInteger(ms) && ms >= 60000 && ms <= 28 * 86400000 ? ms : null;
+}
+
+async function tgManagerModerationLog(guild, targetUser, actor, type, reason, state = 'ejecutada') {
+    const entry = {
+        id: nuevoIdCaso(),
+        guildId: guild.id,
+        usuarioId: targetUser.id,
+        usuarioNombre: targetUser.tag || targetUser.username,
+        tipo: type,
+        motivo: String(reason).slice(0, 1000),
+        moderadorId: actor.id,
+        moderadorNombre: actor.user.tag,
+        creadoEn: new Date().toISOString(),
+        duracionMs: null,
+        expiraEn: null,
+        estado: state,
+        retirada: null,
+        metodo: type
+    };
+    casosModeracion.push(entry);
+    if (type === 'advertencia') advertenciasModeracion.push(entry);
+    persistirModeracion();
+    await enviarLogModeracion(guild, entry, 'Acción desde Bot Manager: ' + type);
+    return entry;
+}
+
+async function tgManagerExecuteAction(action) {
+    const guild = await client.guilds.fetch(String(action.guildId)).catch(() => null);
+    if (!guild) throw new Error('El bot ya no está en el servidor indicado.');
+    const actor = await guild.members.fetch(String(action.requestedBy)).catch(() => null);
+    if (!actor) throw new Error('El usuario que solicitó la acción ya no pertenece al servidor.');
+    const botMember = await guild.members.fetchMe().catch(() => null);
+    if (!botMember) throw new Error('No se pudo comprobar el miembro del bot en el servidor.');
+
+    if (['warn', 'timeout', 'kick', 'ban'].includes(action.type)) {
+        const targetUser = await client.users.fetch(String(action.userId)).catch(() => null);
+        if (!targetUser) throw new Error('No se encontró al usuario objetivo.');
+        const target = await guild.members.fetch(targetUser.id).catch(() => null);
+        if (!target) throw new Error('El usuario objetivo no está actualmente en el servidor.');
+        const reason = String(action.reason || '').trim();
+        if (reason.length < 3 || reason.length > 1000) throw new Error('El motivo debe tener entre 3 y 1000 caracteres.');
+        if (!jerarquiaPermite(actor, target, botMember)) {
+            throw new Error('La jerarquía no permite actuar sobre ese usuario. No se puede moderar al dueño, al bot, a uno mismo ni a un superior.');
+        }
+
+        if (action.type === 'warn') {
+            if (!tgManagerPermission(actor, PermissionFlagsBits.ModerateMembers)) throw new Error('Necesitas el permiso Moderar miembros.');
+            const entry = await tgManagerModerationLog(guild, targetUser, actor, 'advertencia', reason, 'registrada');
+            return 'Advertencia registrada. Caso ' + entry.id;
+        }
+
+        if (action.type === 'timeout') {
+            if (!tgManagerPermission(actor, PermissionFlagsBits.ModerateMembers)) throw new Error('Necesitas el permiso Moderar miembros.');
+            const duration = tgManagerDuration(action.duration);
+            if (!duration) throw new Error('Duración inválida. Usa 1m–28d (por ejemplo, 10m, 2h o 7d).');
+            const entry = await aplicarCasoModeracion(guild, actor, targetUser, 'timeout', reason, duration);
+            return 'Timeout aplicado. Caso ' + entry.id;
+        }
+
+        if (action.type === 'kick') {
+            if (!tgManagerPermission(actor, PermissionFlagsBits.KickMembers)) throw new Error('Necesitas el permiso Expulsar miembros.');
+            if (!botMember.permissions.has(PermissionFlagsBits.KickMembers)) throw new Error('Al bot le falta el permiso Expulsar miembros.');
+            await target.kick(reason);
+            const entry = await tgManagerModerationLog(guild, targetUser, actor, 'kick', reason);
+            return 'Usuario expulsado. Caso ' + entry.id;
+        }
+
+        if (action.type === 'ban') {
+            if (!tgManagerPermission(actor, PermissionFlagsBits.BanMembers)) throw new Error('Necesitas el permiso Banear miembros.');
+            if (!botMember.permissions.has(PermissionFlagsBits.BanMembers)) throw new Error('Al bot le falta el permiso Banear miembros.');
+            const entry = await aplicarCasoModeracion(guild, actor, targetUser, 'ban', reason, null);
+            return 'Usuario baneado. Caso ' + entry.id;
+        }
+    }
+
+    if (action.type === 'message') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageMessages)) throw new Error('Necesitas el permiso Gestionar mensajes.');
+        const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
+        if (!channel || !channel.isTextBased() || !channel.send) throw new Error('No se encontró un canal de texto válido en ese servidor.');
+        const botPermissions = botMember.permissionsIn(channel);
+        if (!botPermissions.has(PermissionFlagsBits.ViewChannel) || !botPermissions.has(PermissionFlagsBits.SendMessages)) {
+            throw new Error('Al bot le faltan permisos para ver o escribir en ese canal.');
+        }
+        const content = String(action.content || '').trim();
+        if (!content || content.length > 2000) throw new Error('El mensaje debe tener entre 1 y 2000 caracteres.');
+        await channel.send({ content, allowedMentions: { parse: [] } });
+        return 'Mensaje enviado en #' + channel.name;
+    }
+
+    if (action.type === 'create_channel') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageChannels)) throw new Error('Necesitas el permiso Gestionar canales.');
+        if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)) throw new Error('Al bot le falta el permiso Gestionar canales.');
+        const name = String(action.name || '').trim().toLowerCase().replace(/[^a-z0-9áéíóúñ_-]/gi, '-').replace(/-+/g, '-').slice(0, 100);
+        if (!name) throw new Error('Nombre de canal inválido.');
+        const type = action.channelType === 'voice' ? 2 : action.channelType === 'text' ? 0 : null;
+        if (type === null) throw new Error('Tipo de canal inválido.');
+        let parent = null;
+        if (action.parentId) {
+            parent = await guild.channels.fetch(String(action.parentId)).catch(() => null);
+            if (!parent || parent.type !== 4) throw new Error('La categoría seleccionada no existe en este servidor.');
+        }
+        const created = await guild.channels.create({ name, type, ...(parent ? { parent: parent.id } : {}) });
+        return 'Canal creado: #' + created.name;
+    }
+
+    if (action.type === 'create_role') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageRoles)) throw new Error('Necesitas el permiso Gestionar roles.');
+        if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) throw new Error('Al bot le falta el permiso Gestionar roles.');
+        const name = String(action.name || '').trim().slice(0, 100);
+        if (!name) throw new Error('Nombre de rol inválido.');
+        const colorText = String(action.color || '').replace('#', '');
+        const color = /^[0-9a-fA-F]{6}$/.test(colorText) ? parseInt(colorText, 16) : undefined;
+        const created = await guild.roles.create({
+            name,
+            ...(color !== undefined ? { color } : {}),
+            permissions: []
+        });
+        return 'Rol creado: ' + created.name;
+    }
+
+    throw new Error('Tipo de acción desconocido: ' + String(action.type));
+}
+
+async function tgManagerPollActions() {
+    if (tgManagerPolling || !client.isReady() || !process.env.TG_API_SECRET) return;
+    tgManagerPolling = true;
+    try {
+        const payload = await tgManagerRequest('/api/bridge/actions');
+        const actions = Array.isArray(payload?.actions) ? payload.actions.slice(0, 20) : [];
+        const completed = [];
+        for (const action of actions) {
+            if (!action || typeof action.id !== 'string') continue;
+            try {
+                const result = await tgManagerExecuteAction(action);
+                tgManagerLog('Acción ' + action.type + ' completada (' + action.id + '): ' + result);
+            } catch (error) {
+                tgManagerLog('Acción ' + action.type + ' rechazada (' + action.id + '): ' + error.message, 'error');
+            } finally {
+                completed.push(action.id);
+            }
+        }
+        if (completed.length) {
+            await tgManagerRequest('/api/bridge/actions', {
+                method: 'POST',
+                body: JSON.stringify({ completed })
+            });
+        }
+    } catch (error) {
+        tgManagerLog('No se pudo consultar la cola de acciones: ' + error.message, 'error');
+    } finally {
+        tgManagerPolling = false;
+    }
+}
+
+async function tgManagerApplyConfig() {
+    if (!client.isReady() || !process.env.TG_API_SECRET) return;
+    try {
+        const config = await tgManagerRequest('/api/bridge/config');
+        const snapshot = JSON.stringify(config || {});
+        if (snapshot === tgManagerConfigSnapshot) return;
+        const presenceTypes = { PLAYING: 0, STREAMING: 1, LISTENING: 2, WATCHING: 3, COMPETING: 5 };
+        const typeName = String(config?.presence?.type || 'PLAYING').toUpperCase();
+        const activityType = presenceTypes[typeName] ?? 0;
+        const activityText = String(config?.presence?.text || config?.identity?.activityText || 'The Galactics').slice(0, 128);
+        client.user.setPresence({
+            status: 'online',
+            activities: [{ name: activityText, type: activityType }]
+        });
+        const displayName = String(config?.identity?.displayName || '').trim().slice(0, 32);
+        if (displayName && displayName !== client.user.username) {
+            await client.user.setUsername(displayName).catch(error => {
+                tgManagerLog('No se pudo actualizar el nombre global del bot: ' + error.message, 'error');
+            });
+        }
+        tgManagerConfigSnapshot = snapshot;
+        tgManagerLog('Configuración de presencia e identidad sincronizada.');
+    } catch (error) {
+        tgManagerLog('No se pudo sincronizar la configuración: ' + error.message, 'error');
+    }
+}
+
+async function tgManagerSendTelemetry() {
+    if (!client.isReady() || !process.env.TG_API_SECRET) return;
+    try {
+        const guilds = [];
+        for (const guild of client.guilds.cache.values()) {
+            const channels = [...guild.channels.cache.values()].slice(0, 300).map(channel => ({
+                id: channel.id,
+                name: channel.name,
+                type: channel.type
+            }));
+            const roles = [...guild.roles.cache.values()].slice(0, 200).map(role => ({
+                id: role.id,
+                name: role.name
+            }));
+            guilds.push({
+                id: guild.id,
+                name: guild.name,
+                memberCount: guild.memberCount,
+                channels,
+                roles
+            });
+        }
+        await tgManagerRequest('/api/bridge/events', {
+            method: 'POST',
+            body: JSON.stringify({ guilds: guilds.slice(0, 100), logs: tgManagerRecentLogs.slice(-100) })
+        });
+    } catch (error) {
+        tgManagerLog('No se pudo enviar telemetría al panel: ' + error.message, 'error');
+    }
+}
+
 function rangoMasAltoPostulacion(member) {
     if (!member) return -1;
     // El dueño del servidor equivale al nivel más alto.
@@ -1696,6 +1960,16 @@ client.once('ready', async function() {
 
 await enviarHeartbeat();
 setInterval(enviarHeartbeat, 30000);
+
+    // Sincronización del panel: acciones cada 5 s, configuración cada 15 s y telemetría cada 60 s.
+    setInterval(() => tgManagerPollActions().catch(error => tgManagerLog(error.message, 'error')), 5000);
+    setInterval(() => tgManagerApplyConfig().catch(error => tgManagerLog(error.message, 'error')), 15000);
+    setInterval(() => tgManagerSendTelemetry().catch(error => tgManagerLog(error.message, 'error')), 60000);
+    setTimeout(() => {
+        tgManagerApplyConfig().catch(error => tgManagerLog(error.message, 'error'));
+        tgManagerSendTelemetry().catch(error => tgManagerLog(error.message, 'error'));
+    }, 3000);
+
 
     try {
 
