@@ -1736,9 +1736,9 @@ async function tgManagerExecuteAction(action) {
     }
 
     if (action.type === 'message') {
-        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageMessages)) throw new Error('Necesitas el permiso Gestionar mensajes.');
         const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
         if (!channel || !channel.isTextBased() || !channel.send) throw new Error('No se encontró un canal de texto válido en ese servidor.');
+        if (!actor.permissionsIn(channel).has(PermissionFlagsBits.SendMessages)) throw new Error('Necesitas el permiso Enviar mensajes en ese canal.');
         const botPermissions = botMember.permissionsIn(channel);
         if (!botPermissions.has(PermissionFlagsBits.ViewChannel) || !botPermissions.has(PermissionFlagsBits.SendMessages)) {
             throw new Error('Al bot le faltan permisos para ver o escribir en ese canal.');
@@ -1747,6 +1747,62 @@ async function tgManagerExecuteAction(action) {
         if (!content || content.length > 2000) throw new Error('El mensaje debe tener entre 1 y 2000 caracteres.');
         await channel.send({ content, allowedMentions: { parse: [] } });
         return 'Mensaje enviado en #' + channel.name;
+    }
+
+    if (action.type === 'purge') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageMessages)) throw new Error('Necesitas Gestionar mensajes.');
+        const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
+        if (!channel || !channel.isTextBased() || !channel.bulkDelete) throw new Error('Canal no válido para limpiar mensajes.');
+        const perms = botMember.permissionsIn(channel);
+        if (!perms.has(PermissionFlagsBits.ViewChannel) || !perms.has(PermissionFlagsBits.ReadMessageHistory) || !perms.has(PermissionFlagsBits.ManageMessages)) throw new Error('Al bot le faltan permisos para leer y gestionar mensajes.');
+        const amount = Number(action.amount);
+        if (!Number.isInteger(amount) || amount < 1 || amount > 100) throw new Error('Cantidad inválida (1–100).');
+        const deleted = await channel.bulkDelete(amount, true);
+        return 'Mensajes eliminados: ' + deleted.size;
+    }
+
+    if (action.type === 'slowmode') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageChannels)) throw new Error('Necesitas Gestionar canales.');
+        const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
+        if (!channel || !channel.isTextBased() || !channel.setRateLimitPerUser) throw new Error('Canal no válido.');
+        if (!botMember.permissionsIn(channel).has(PermissionFlagsBits.ManageChannels)) throw new Error('Al bot le falta Gestionar canales.');
+        const seconds = Number(action.seconds);
+        if (!Number.isInteger(seconds) || seconds < 0 || seconds > 21600) throw new Error('Slowmode inválido.');
+        await channel.setRateLimitPerUser(seconds, 'Desde Bot Manager');
+        return 'Slowmode configurado: ' + seconds + ' segundos.';
+    }
+
+    if (action.type === 'lock_channel') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageChannels)) throw new Error('Necesitas Gestionar canales.');
+        const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
+        if (!channel || !channel.permissionOverwrites) throw new Error('Canal no válido.');
+        if (!botMember.permissionsIn(channel).has(PermissionFlagsBits.ManageRoles)) throw new Error('Al bot le falta Gestionar roles.');
+        await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false }, { reason: 'Desde Bot Manager' });
+        return 'Canal bloqueado para @everyone.';
+    }
+
+    if (action.type === 'nickname') {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageNicknames)) throw new Error('Necesitas Gestionar apodos.');
+        const target = await guild.members.fetch(String(action.userId)).catch(() => null);
+        if (!target) throw new Error('Miembro no encontrado.');
+        if (!jerarquiaPermite(actor, target, botMember)) throw new Error('La jerarquía no permite cambiar ese apodo.');
+        if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames)) throw new Error('Al bot le falta Gestionar apodos.');
+        const nickname = String(action.nickname || '').trim().slice(0, 32);
+        await target.setNickname(nickname || null, 'Desde Bot Manager');
+        return 'Apodo actualizado.';
+    }
+
+    if (['add_role', 'remove_role'].includes(action.type)) {
+        if (!tgManagerPermission(actor, PermissionFlagsBits.ManageRoles)) throw new Error('Necesitas Gestionar roles.');
+        const target = await guild.members.fetch(String(action.userId)).catch(() => null);
+        const role = await guild.roles.fetch(String(action.roleId)).catch(() => null);
+        if (!target || !role) throw new Error('Miembro o rol no encontrado.');
+        if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) throw new Error('Al bot le falta Gestionar roles.');
+        if (role.managed || role.position >= botMember.roles.highest.position || (role.position >= actor.roles.highest.position && actor.id !== guild.ownerId)) throw new Error('La jerarquía impide modificar ese rol.');
+        if (!jerarquiaPermite(actor, target, botMember)) throw new Error('La jerarquía impide modificar a ese miembro.');
+        if (action.type === 'add_role') await target.roles.add(role, 'Desde Bot Manager');
+        else await target.roles.remove(role, 'Desde Bot Manager');
+        return (action.type === 'add_role' ? 'Rol añadido: ' : 'Rol quitado: ') + role.name;
     }
 
     if (action.type === 'create_channel') {
