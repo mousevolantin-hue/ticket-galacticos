@@ -1592,7 +1592,9 @@ async function enviarHeartbeat() {
                     botId: client.user.id,
                     username: client.user.tag,
                     guildCount: client.guilds.cache.size,
-                    uptime: Math.floor(process.uptime())
+                    uptime: Math.floor(process.uptime()),
+                    ping: Number.isFinite(client.ws.ping) ? client.ws.ping : null,
+                    memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024)
                 })
             }
         );
@@ -1615,6 +1617,7 @@ async function enviarHeartbeat() {
 const TG_MANAGER_URL = 'https://the-galactics-bot-manager.pages.dev';
 let tgManagerPolling = false;
 let tgManagerConfigSnapshot = '';
+const tgManagerCommandUsage = Object.create(null);
 const tgManagerRecentLogs = [];
 
 function tgManagerLog(message, level = 'info') {
@@ -1733,6 +1736,18 @@ async function tgManagerExecuteAction(action) {
             const entry = await aplicarCasoModeracion(guild, actor, targetUser, 'ban', reason, null);
             return 'Usuario baneado. Caso ' + entry.id;
         }
+    }
+
+    if (action.type === 'announcement') {
+        const channel = await guild.channels.fetch(String(action.channelId)).catch(() => null);
+        if (!channel || !channel.isTextBased() || !channel.send) throw new Error('No se encontró un canal de texto válido.');
+        if (!actor.permissionsIn(channel).has(PermissionFlagsBits.SendMessages)) throw new Error('Necesitas permiso para enviar mensajes en ese canal.');
+        const perms = botMember.permissionsIn(channel);
+        if (!perms.has(PermissionFlagsBits.ViewChannel) || !perms.has(PermissionFlagsBits.SendMessages)) throw new Error('Al bot le faltan permisos para publicar en ese canal.');
+        const content = String(action.content || '').trim();
+        if (!content || content.length > 2000) throw new Error('El anuncio debe tener entre 1 y 2000 caracteres.');
+        await channel.send({ content, allowedMentions: { parse: [] } });
+        return 'Anuncio publicado en #' + channel.name;
     }
 
     if (action.type === 'message') {
@@ -1921,7 +1936,7 @@ async function tgManagerSendTelemetry() {
         }
         await tgManagerRequest('/api/bridge/events', {
             method: 'POST',
-            body: JSON.stringify({ guilds: guilds.slice(0, 100), logs: tgManagerRecentLogs.slice(-100) })
+            body: JSON.stringify({ guilds: guilds.slice(0, 100), logs: tgManagerRecentLogs.slice(-100), commandUsage: tgManagerCommandUsage })
         });
     } catch (error) {
         tgManagerLog('No se pudo enviar telemetría al panel: ' + error.message, 'error');
@@ -2227,6 +2242,7 @@ client.on('interactionCreate', async function(interaction) {
     if (interaction.isChatInputCommand()) {
 
         const commandName = interaction.commandName;
+        tgManagerCommandUsage[commandName] = (tgManagerCommandUsage[commandName] || 0) + 1;
         if (commandName === 'crear' && interaction.options.getSubcommand() === 'sorteo') {
             const opcionesSorteo = interaction.options;
             const servidorSorteo = interaction.guild;
