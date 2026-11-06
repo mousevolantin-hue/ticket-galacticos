@@ -383,22 +383,22 @@ const BRAINROTS = {
             'https://cdn.phototourl.com/free/2026-09-18-20490fbc-3425-4401-8060-f7948eff136c.jpg',
 
         valores: {
-            Normal: '7.5K - 8K CLP',
+            Normal: '8.3K - 8.7K CLP',
             Oro: '8.5K - 9K CLP',
             Diamante: '9.5K - 10K CLP',
-            Rainbow: '15K CLP',
-            Eclipse: '22K CLP',
-            Crystal: '19K - 20K CLP',
-            Phantom: '19K - 20K CLP',
+            Rainbow: '14K CLP',
+            Eclipse: '19K CLP',
+            Crystal: '18K - 20K CLP',
+            Phantom: '18K - 20K CLP',
             Cyber: '18.5K - 19.5K CLP',
             Divino: '18K - 18.5K CLP',
             Cursed: '18K - 18.5K CLP',
             Radioactivo: '17.5K - 18K CLP',
-            'Yin Yang': '18K - 18.5K CLP',
-            Galaxy: '18K - 18.5K CLP',
-            Lava: '15K - 16K CLP',
-            Candy: '15K - 16K CLP',
-            Bloodroot: '23K CLP'
+            'Yin Yang': '18K CLP',
+            Galaxy: '18K CLP',
+            Lava: '14.5K CLP',
+            Candy: '14.5 CLP',
+            Bloodroot: '19K CLP'
         }
     },
 
@@ -407,7 +407,7 @@ const BRAINROTS = {
             'https://cdn.phototourl.com/free/2026-09-19-7cd4e713-1e6c-4b05-8a97-bddf9466f1b0.jpg',
 
         valores: {
-            Normal: '1K CLP',
+            Normal: '800 CLP',
             Oro: 'NO EXISTE',
             Diamante: 'NO EXISTE',
             Rainbow: 'NO EXISTE',
@@ -433,20 +433,20 @@ const BRAINROTS = {
         valores: {
             Normal: '450 CLP',
             Oro: '550 CLP',
-            Diamante: '650 CLP',
-            Rainbow: '2.2K - 2.4K CLP',
-            Eclipse: '2.7K - 3K CLP',
-            Crystal: '2.5K - 2.6K CLP',
-            Phantom: '2.5K - 2.6K CLP',
-            Cyber: '2.5K CLP',
-            Divino: '2.5K CLP',
-            Cursed: '2.5K CLP',
-            Radioactivo: '2.5K CLP',
-            'Yin Yang': 'Precio no especificado',
-            Galaxy: '2.5K CLP',
+            Diamante: '600 CLP',
+            Rainbow: '1.5K - 2.4K CLP',
+            Eclipse: '2.5K - 3K CLP',
+            Crystal: '2.2K - 2.6K CLP',
+            Phantom: '2.2K - 2.6K CLP',
+            Cyber: '2.2K CLP',
+            Divino: '2.2K CLP',
+            Cursed: '2.2K CLP',
+            Radioactivo: '2.2K CLP',
+            'Yin Yang': '2.2k',
+            Galaxy: '2.2K CLP',
             Lava: '2.2K CLP',
             Candy: '2.2K CLP',
-            Bloodroot: '2.6K - 2.8K CLP'
+            Bloodroot: '2.6K CLP'
         }
     },
 
@@ -455,9 +455,9 @@ const BRAINROTS = {
             'https://cdn.phototourl.com/free/2026-09-19-ad906f1d-da8e-4b4a-bd3b-e1696bd39c3d.jpg',
 
         valores: {
-            Normal: '800 - 1K CLP',
-            Oro: '950 - 1150 CLP',
-            Diamante: '1150 - 1.3K CLP',
+            Normal: '500 CLP',
+            Oro: '600 CLP',
+            Diamante: '700K CLP',
             Rainbow: '1.5K - 1.6K CLP',
             Eclipse: '2K - 2.2K CLP',
             Crystal: '1.8K CLP',
@@ -470,7 +470,7 @@ const BRAINROTS = {
             Galaxy: '1.7K CLP',
             Lava: '1.5K CLP',
             Candy: '1.5K CLP',
-            Bloodroot: '2.2K - 2.4K CLP'
+            Bloodroot: '2.2K CLP'
         }
     }
 };
@@ -481,7 +481,7 @@ const BRAINROTS = {
 
 const NOMBRES_BRAINROTS = [
     'Burguro and Fryuro',
-    'CAPITANO MOBY',
+    'Capitano Moby',
     'Cash or Card',
     'Cerberus',
     'Cooki and milki',
