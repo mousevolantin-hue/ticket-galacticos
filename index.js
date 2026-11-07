@@ -26,11 +26,32 @@ const path = require('path');
 // ============================================================
 const CLP_POR_USD = 959.47;
 const CANAL_REGLAS = '1549237877186236476';
-const GIF_NUEVO = 'https://www.image2url.com/r2/default/gifs/1791161891343-374344e5-6588-4ba9-8aa1-3ebb6eacea57.gif';
+const GIF_NUEVO = 'https://cdn.discordapp.com/attachments/1525702007288102933/1568700771493478480/In_the_tropical_beach_scene_dc4134d8_1_1_1.gif';
 const GIF_REGLAS = GIF_NUEVO;
 const GIF_COMANDOS = GIF_NUEVO;
+const GIF_PANEL_MIDDLEMAN = 'https://cdn.discordapp.com/attachments/1535379520620593243/1568441259817697320/standard.gif';
+const GIF_PANEL_SOPORTE = 'https://cdn.discordapp.com/attachments/1561573847399014491/1568444617999786107/standard_1.gif';
 const CERBERUS_PATH = path.join(__dirname, 'cerberus.png');
 const CANAL_REGISTROS_MIDDLEMAN = '1555339131964489899';
+
+// Color opcional para embeds de paneles. Acepta HEX con o sin #.
+function obtenerColorPanel(valor, predeterminado) {
+    if (valor == null || String(valor).trim() === '') return predeterminado;
+    const hex = String(valor).trim().replace(/^#/, '');
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+    return Number.parseInt(hex, 16);
+}
+
+function opcionColorPanel() {
+    return {
+        name: 'color',
+        description: 'Color HEX de la barra lateral (ej.: #00BFFF)',
+        type: ApplicationCommandOptionType.String,
+        required: false,
+        min_length: 6,
+        max_length: 7
+    };
+}
 
 // ============================================================
 // SISTEMA DE SORTEOS THE GALACTICS
@@ -642,9 +663,10 @@ function obtenerArchivosBrainrot(nombre) {
 // PANEL PRINCIPAL DE REGLAS
 // ============================================================
 
-function crearMenuReglasEmbed() {
+function crearMenuReglasEmbed(color = 0x5865F2) {
 
     return new EmbedBuilder()
+        .setColor(color)
 
         .setTitle(
             'Reglamento del servidor'
@@ -670,9 +692,10 @@ function crearMenuReglasEmbed() {
 // REGLAS GENERALES
 // ============================================================
 
-function crearReglasGeneralesEmbed() {
+function crearReglasGeneralesEmbed(color = 0x5865F2) {
 
     return new EmbedBuilder()
+        .setColor(color)
 
         .setTitle(
             'Reglas en General'
@@ -755,9 +778,10 @@ Al permanecer en el servidor se entiende que conoces y respetas estas reglas.
 // REGLAS MIDDLEMAN
 // ============================================================
 
-function crearReglasMiddlemanEmbed() {
+function crearReglasMiddlemanEmbed(color = 0x5865F2) {
 
     return new EmbedBuilder()
+        .setColor(color)
 
         .setTitle(
             'Reglas Middleman'
@@ -798,8 +822,9 @@ function crearReglasMiddlemanEmbed() {
 }
 
 
-function crearReglasSancionesEmbed() {
+function crearReglasSancionesEmbed(color = 0x5865F2) {
     return new EmbedBuilder()
+        .setColor(color)
         .setTitle('Reglas de sanciones')
         .setDescription(`
 **1. Pruebas y contexto**
@@ -833,12 +858,12 @@ function crearReglasSancionesEmbed() {
 // MENÚ PÚBLICO DE REGLAS
 // ============================================================
 
-function crearMenuReglas() {
+function crearMenuReglas(colorHex = '5865F2') {
 
     return new StringSelectMenuBuilder()
 
         .setCustomId(
-            'reglas_menu_publico'
+            `reglas_menu_publico_${colorHex}`
         )
 
         .setPlaceholder(
@@ -886,12 +911,12 @@ function crearMenuReglas() {
 // MENÚ PRIVADO DE REGLAS
 // ============================================================
 
-function crearMenuReglasPrivado() {
+function crearMenuReglasPrivado(colorHex = '5865F2') {
 
     return new StringSelectMenuBuilder()
 
         .setCustomId(
-            'reglas_privado'
+            `reglas_privado_${colorHex}`
         )
 
         .setPlaceholder(
@@ -1967,10 +1992,10 @@ function esAdminPostulaciones(member) {
         member.roles.cache.has(ROLES_POSTULACION['co-owner'].id) ||
         member.roles.cache.has(ROLES_POSTULACION.administrador.id));
 }
-function crearPanelPostulaciones() {
+function crearPanelPostulaciones(color = 0xF39C12) {
     return {
         embeds: [new EmbedBuilder()
-            .setColor(0xF39C12)
+            .setColor(color)
             .setTitle('🎃 Postulaciones | The Galactics')
             .setDescription('¿Quieres crecer dentro del equipo? Inicia tu postulación desde el botón de abajo.\\n\\nEl sistema solo mostrará los rangos disponibles según tu rango actual y el stock habilitado por la administración.')
             .setImage(GIF_NUEVO)
@@ -2048,12 +2073,14 @@ setInterval(enviarHeartbeat, 30000);
 
             {
                 name: 'panel_middleman',
-                description: 'Enviar el panel de Middleman (Solo Admin)'
+                description: 'Enviar el panel de Middleman (Solo Admin)',
+                options: [opcionColorPanel()]
             },
 
             {
                 name: 'panel_soporte',
-                description: 'Enviar el panel de Soporte General (Solo Admin)'
+                description: 'Enviar el panel de Soporte General (Solo Admin)',
+                options: [opcionColorPanel()]
             },
 
             {
@@ -2142,7 +2169,8 @@ setInterval(enviarHeartbeat, 30000);
             },
             {
                 name: 'reglas',
-                description: 'Muestra las reglas del servidor.'
+                description: 'Muestra las reglas del servidor.',
+                options: [opcionColorPanel()]
             },
             {
                 name: 'registro',
@@ -2159,7 +2187,8 @@ setInterval(enviarHeartbeat, 30000);
             },
             {
                 name: 'panel_postulaciones',
-                description: 'Publicar el panel de postulaciones'
+                description: 'Publicar el panel de postulaciones',
+                options: [opcionColorPanel()]
             },
             {
                 name: 'añadir_rangos',
@@ -2288,7 +2317,9 @@ client.on('interactionCreate', async function(interaction) {
             const actor = await guild.members.fetch(user.id).catch(() => null);
             if (commandName === 'panel_postulaciones') {
                 if (!esAdminPostulaciones(actor)) return interaction.reply({ content: '❌ Solo administración puede publicar el panel.', ephemeral: true });
-                await channel.send(crearPanelPostulaciones());
+                const colorPanel = obtenerColorPanel(options.getString('color'), 0xF39C12);
+                if (colorPanel === null) return interaction.reply({ content: '❌ Color inválido. Usa HEX de 6 dígitos, por ejemplo `#F39C12`.', ephemeral: true });
+                await channel.send(crearPanelPostulaciones(colorPanel));
                 return interaction.reply({ content: '✅ Panel de postulaciones publicado.', ephemeral: true });
             }
             if (commandName === 'añadir_rangos' || commandName === 'eliminar_rangos') {
@@ -2426,9 +2457,14 @@ client.on('interactionCreate', async function(interaction) {
             if (channel.id !== CANAL_REGLAS) {
                 return interaction.reply({content: `Usa este comando en <#${CANAL_REGLAS}>.`, ephemeral: true});
             }
+            const color = obtenerColorPanel(options.getString('color'), 0x5865F2);
+            if (color === null) {
+                return interaction.reply({content: '❌ Color inválido. Usa HEX de 6 dígitos, por ejemplo `#8A2BE2`.', ephemeral: true});
+            }
+            const colorHex = color.toString(16).padStart(6, '0').toUpperCase();
             return interaction.reply({
-                embeds: [crearMenuReglasEmbed()],
-                components: [new ActionRowBuilder().addComponents(crearMenuReglas())]
+                embeds: [crearMenuReglasEmbed(color)],
+                components: [new ActionRowBuilder().addComponents(crearMenuReglas(colorHex))]
             });
         }
 
@@ -2451,9 +2487,15 @@ client.on('interactionCreate', async function(interaction) {
 
             }
 
+            const colorPanel = obtenerColorPanel(options.getString('color'), 0x00BFFF);
+            if (colorPanel === null) {
+                return interaction.reply({ content: '❌ Color inválido. Usa HEX de 6 dígitos, por ejemplo `#00BFFF`.', ephemeral: true });
+            }
+
             const embedPanel = new EmbedBuilder()
                 .setTitle('🤝 Servicio Oficial de Middleman')
-                .setColor(0x2ECC71)
+                .setColor(colorPanel)
+                .setImage(GIF_PANEL_MIDDLEMAN)
                 .setDescription(
                     '¿Quieres hacer tus trades, ventas, pvps, confiables pero no sabes como?, pues nosotros tenemos un equipo de intermediarios que te ayudará en todo lo necesario para que tus trades, ventas y pvps sean 100% legales. Están 100% recomendados por la comunidad. Los intermediarios, más conocidos como middleman, estarán siempre disponibles cuando necesites ayuda.\n\n' +
                     'Haz clic en el botón para solicitar un **Middleman** oficial para tu transacción.'
@@ -2504,9 +2546,15 @@ client.on('interactionCreate', async function(interaction) {
 
             }
 
+            const colorPanel = obtenerColorPanel(options.getString('color'), 0x8000FF);
+            if (colorPanel === null) {
+                return interaction.reply({ content: '❌ Color inválido. Usa HEX de 6 dígitos, por ejemplo `#8000FF`.', ephemeral: true });
+            }
+
             const embedSoporte = new EmbedBuilder()
                 .setTitle('🛠️ Centro de Soporte y Atención')
-                .setColor(0x3498DB)
+                .setColor(colorPanel)
+                .setImage(GIF_PANEL_SOPORTE)
                 .setDescription(
                     '¡Hola! ¿Te gustaría solucionar algún problema, resolver alguna pregunta o reportar algo? Te invito a abrir un ticket de soporte para que nuestro equipo de staff te ayude.\n\n' +
                     'Recuerda que el staff siempre intentará estar a disposición para ayudar a todos los miembros que lo necesiten. También pedimos no abrir un ticket sin razón o para molestar. Los miembros del staff darán lo mejor para mantener un excelente ambiente entre todos.\n\n' +
@@ -3228,15 +3276,20 @@ client.on('interactionCreate', async function(interaction) {
     if (interaction.isStringSelectMenu()) {
         const customId = interaction.customId;
 
-        if (customId === 'reglas_menu_publico' || customId === 'reglas_privado') {
+        if (customId === 'reglas_menu_publico' || customId === 'reglas_privado' ||
+            customId.startsWith('reglas_menu_publico_') || customId.startsWith('reglas_privado_')) {
+            const esMenuPublico = customId === 'reglas_menu_publico' || customId.startsWith('reglas_menu_publico_');
+            const colorTexto = customId.split('_').slice(esMenuPublico ? 3 : 2).join('_') || '5865F2';
+            const color = obtenerColorPanel(colorTexto, 0x5865F2) ?? 0x5865F2;
+            const colorHex = color.toString(16).padStart(6, '0').toUpperCase();
             const categoria = interaction.values[0];
             const embed = categoria === 'general'
-                ? crearReglasGeneralesEmbed()
+                ? crearReglasGeneralesEmbed(color)
                 : categoria === 'middleman'
-                    ? crearReglasMiddlemanEmbed()
-                    : crearReglasSancionesEmbed();
-            const components = [new ActionRowBuilder().addComponents(crearMenuReglasPrivado())];
-            if (customId === 'reglas_menu_publico') {
+                    ? crearReglasMiddlemanEmbed(color)
+                    : crearReglasSancionesEmbed(color);
+            const components = [new ActionRowBuilder().addComponents(crearMenuReglasPrivado(colorHex))];
+            if (esMenuPublico) {
                 return interaction.reply({embeds: [embed], components, ephemeral: true});
             }
             return interaction.update({embeds: [embed], components});
