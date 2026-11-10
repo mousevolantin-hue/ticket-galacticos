@@ -4232,18 +4232,14 @@ require('dotenv').config();
                 ) {
     
                     return interaction.reply({
-    
-                        content:
-                            '<:IMG_6389:1558214160775520336> **ESPERA** Antes de cerrar el ticket, <@' +
-                            datos.creador.id +
-                            '> debe reseñar a: <@' +
-                            datos.reclamadoPor.id +
-`Usa "/reseñar (Middleman)" para reseñar!` 
-                            '>',
-    
-                        ephemeral: false
-    
-                    });
+    content:
+        '<:IMG_6389:1558214160775520336> **ESPERA** Antes de cerrar el ticket, <@' +
+        datos.creador.id +
+        '> debe reseñar a: <@' +
+        datos.reclamadoPor.id +
+        '>\nUsa `/reseñar (Middleman)` para reseñar!',
+    ephemeral: false
+});
     
                 }
     
