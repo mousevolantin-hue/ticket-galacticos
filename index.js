@@ -3002,7 +3002,7 @@ require('dotenv').config();
                             origen +
                             ')'
                         )
-                        .setColor(BF00FF)
+                        .setColor("#BF00FF")
                         .setDescription(
                             '**<a:arrow_blue:1563954308637007934> Cliente:** <@' +
                             user.id +
