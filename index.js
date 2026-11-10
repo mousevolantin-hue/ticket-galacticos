@@ -3010,7 +3010,7 @@ require('dotenv').config();
                             '**<:middleman:1534930961249341480> Middleman Reseñado:** <@' +
                             objetivo.id +
                             '>\n' +
-                            '**Calificación:** ' +
+                            '**:Gift:1563954296293167195> Calificación:** ' +
                             estrellasStr +
                             ' (' +
                             estrellas +
